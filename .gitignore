@@ -1,0 +1,51 @@
+
+# Compiled C/C++ files
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.out
+
+# Project executables generated during development
+/src/network/RequestParser
+/src/network/RequestParser.exe
+
+# Build directories
+/build/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/Testing/
+
+# CMake-generated files
+Makefile
+*.cmake.user
+
+# Test output and coverage
+*.gcda
+*.gcno
+*.profraw
+coverage/
+
+# Debugging artifacts
+core
+core.*
+
+# Editor and IDE state
+.vscode/*
+!.vscode/tasks.json
+!.vscode/extensions.json
+.idea/
+
+# Temporary files and backups
+*.tmp
+*.swp
+*.swo
+*~
+
+# OS-generated files
+.DS_Store
+Thumbs.db

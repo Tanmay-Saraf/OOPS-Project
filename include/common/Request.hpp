@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <cstdint>
 
 namespace oops {
 
@@ -22,6 +23,8 @@ enum class Command {
 struct Request {
     Command command = Command::Invalid;
     std::string key;
+    std::string value;
+    std::uint64_t version = 0;
 };
 
 } // namespace oops
