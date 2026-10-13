@@ -13,5 +13,4 @@ struct DetectionResult{
     Severity HowSevere;
 };
 
-
 #endif
