@@ -1,3 +1,5 @@
+// Implements ModificationActivityDetector::analyze() Overrides the analyze() interface inherited from SecurityDetector
+// Counts SET and DELETE_RECORD requests in a sliding time window
 #include "ModificationActivityDetector.h"
 #include <algorithm>
 #include <cstddef>

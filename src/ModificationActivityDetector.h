@@ -1,3 +1,4 @@
+// Inherits publicly from SecurityDetector, Overrides the pure virtual analyze() function
 #ifndef MODIFICATION_ACTIVITY_DETECTION_H
 #define MODIFICATION_ACTIVITY_DETECTION_H
 #include "SecurityDetector.h"
