@@ -1,73 +1,68 @@
+
 #include "security/SecurityEngine.h"
 
-SecurityEngine::SecurityEngine()
-    : logger("security.log") {}
+namespace oops {
+SecurityEngine::SecurityEngine() : logger("security.log") {}
 
-SecurityDecision SecurityEngine::processRequest(
-    const oops::Request& request
-) {
-    SecurityState state = stateManager.getState();
+SecurityDecision SecurityEngine::processRequest(const Request& request) {
+    SecurityDecision decision;
 
-    auto deny = [&](const std::string& reason) {
-        logger.logEvent("REQUEST_BLOCKED", reason);
-        return SecurityDecision{false, reason, stateManager.getState()};
-    };
+    decision.currentState = stateManager.getState();
 
-    switch (request.command) {
-        case oops::Command::Invalid:
-            return deny("Invalid command");
-
-        case oops::Command::Save:
-            return deny("Save denied: authorization not implemented");
-
-        case oops::Command::Recover:
-            return deny("Recovery denied: authorization not implemented");
-
-        case oops::Command::Ping:
-        case oops::Command::Quit:
-        case oops::Command::Status:
-        case oops::Command::Get:
-        case oops::Command::Exists:
-        case oops::Command::Keys:
-        case oops::Command::History:
-        case oops::Command::GetVersion:
-            return {true, "Request allowed", state};
-
-        case oops::Command::Set:
-        case oops::Command::Delete:
-            break;
+    if (request.command == Command::Get ||
+        request.command == Command::Exists ||
+        request.command == Command::Keys ||
+        request.command == Command::History ||
+        request.command == Command::GetVersion ||
+        request.command == Command::Ping ||
+        request.command == Command::Quit ||
+        request.command == Command::Status) {
+        decision.allowed = true;
+        decision.reason = "Read or safe command";
+        return decision;
     }
 
-    if (state != SecurityState::RUNNING) {
-        return deny("Writes denied while security state is not RUNNING");
+    if (request.command == Command::Save ||
+        request.command == Command::Recover ||
+        request.command == Command::Invalid) {
+        decision.allowed = false;
+        decision.reason = "Command denied by security policy";
+        return decision;
+    }
+
+    if (stateManager.getState() != SecurityState::RUNNING) {
+        decision.allowed = false;
+        decision.reason = "Writes blocked by security state";
+        return decision;
     }
 
     DetectionResult canaryResult = canaryDetector.analyze(request);
 
     if (canaryResult.Suspicious_flag) {
         stateManager.setState(SecurityState::LOCKDOWN);
-        logger.logEvent("CANARY_ALERT", canaryResult.reason);
-
-        return {
-            false,
-            canaryResult.reason,
-            stateManager.getState()
-        };
+        logger.logEvent("CRITICAL", canaryResult.reason);
+        decision.allowed = false;
+        decision.reason = canaryResult.reason;
+        decision.currentState = stateManager.getState();
+        return decision;
     }
 
-    DetectionResult modificationResult =
-        modificationDetector.analyze(request);
+    DetectionResult activityResult = modificationDetector.analyze(request);
 
-    if (modificationResult.Suspicious_flag) {
+    if (activityResult.Suspicious_flag) {
         stateManager.setState(SecurityState::SUSPECTED);
-        logger.logEvent("MODIFICATION_ALERT", modificationResult.reason);
-
-        return {
-            false,
-            modificationResult.reason,
-            stateManager.getState()
-        };
+        logger.logEvent("HIGH", activityResult.reason);
+        decision.allowed = false;
+        decision.reason = activityResult.reason;
+        decision.currentState = stateManager.getState();
+        return decision;
     }
 
-    return {true, "Request allowed", stateManager.getState()};
+    decision.allowed = true;
+    decision.reason = "Request allowed";
+    decision.currentState = stateManager.getState();
+
+    return decision;
+}
+
 }

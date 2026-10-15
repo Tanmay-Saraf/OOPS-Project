@@ -10,10 +10,12 @@
 #include "SecurityLogger.h"
 #include <string>
 
+namespace oops {
+
 struct SecurityDecision {
-    bool allowed;
+    bool allowed = false;
     std::string reason;
-    SecurityState currentState;
+    SecurityState currentState = SecurityState::RUNNING;
 };
 
 class SecurityEngine {
@@ -25,7 +27,9 @@ private:
 
 public:
     SecurityEngine();
-    SecurityDecision processRequest(const oops::Request& request);
+    SecurityDecision processRequest(const Request& request);
 };
+
+}
 
 #endif

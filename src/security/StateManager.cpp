@@ -1,4 +1,7 @@
+
 #include "security/StateManager.h"
+
+namespace oops {
 
 SecurityState StateManager::getState() const {
     return currentState;
@@ -6,4 +9,6 @@ SecurityState StateManager::getState() const {
 
 void StateManager::setState(SecurityState newState) {
     currentState = newState;
+}
+
 }

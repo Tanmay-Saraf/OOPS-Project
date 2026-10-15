@@ -1,7 +1,7 @@
 #include "security/SecurityEngine.h"
 #include <cassert>
 #include <iostream>
-
+using namespace oops;
 int main() {
     SecurityEngine engine;
     oops::Request request{};

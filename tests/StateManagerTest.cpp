@@ -3,18 +3,18 @@
 #include <iostream>
 
 int main() {
-    StateManager manager;
+    oops::StateManager manager;
 
-    assert(manager.getState() == SecurityState::RUNNING);
+    assert(manager.getState() == oops::SecurityState::RUNNING);
 
-    manager.setState(SecurityState::SUSPECTED);
-    assert(manager.getState() == SecurityState::SUSPECTED);
+    manager.setState(oops::SecurityState::SUSPECTED);
+    assert(manager.getState() == oops::SecurityState::SUSPECTED);
 
-    manager.setState(SecurityState::LOCKDOWN);
-    assert(manager.getState() == SecurityState::LOCKDOWN);
+    manager.setState(oops::SecurityState::LOCKDOWN);
+    assert(manager.getState() == oops::SecurityState::LOCKDOWN);
 
-    manager.setState(SecurityState::RUNNING);
-    assert(manager.getState() == SecurityState::RUNNING);
+    manager.setState(oops::SecurityState::RUNNING);
+    assert(manager.getState() == oops::SecurityState::RUNNING);
 
     std::cout << "All StateManager tests passed!\n";
 
