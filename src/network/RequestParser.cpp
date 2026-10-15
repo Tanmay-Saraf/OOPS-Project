@@ -4,7 +4,8 @@
 #include <cstdint>
 #include <sstream>
 #include <string>
-
+#include <charconv>
+#include <iostream>
 namespace oops {
 
 Request parseRequest(const std::string& line) {
@@ -63,19 +64,22 @@ Request parseRequest(const std::string& line) {
     else if (command == "GET_VERSION") {
         std::string versionText;
 
-        if (!(input >> request.key >> versionText) ||
-            hasExtraArgument()) {
+        if (!(input >> request.key >> versionText) || hasExtraArgument()) {
             return request;
         }
 
-        std::istringstream versionInput(versionText);
-        char extra;
+        std::uint64_t parsedVersion = 0;
 
-        if (!(versionInput >> request.version) ||
-            (versionInput >> extra)) {
+        const char* begin = versionText.data();
+        const char* end = begin + versionText.size();
+
+        auto [ptr, ec] = std::from_chars(begin, end, parsedVersion);
+
+        if (ec != std::errc{} || ptr != end) {
             return request;
         }
 
+        request.version = parsedVersion;
         request.command = Command::GetVersion;
     }
     else if (command == "KEYS" ||
