@@ -1,5 +1,5 @@
 
-#include "CanaryDetector.h"
+#include "security/CanaryDetector.h"
 
 CanaryDetector::CanaryDetector() {
     canaryRecords.insert("canary_001");

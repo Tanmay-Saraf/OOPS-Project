@@ -1,4 +1,4 @@
-#include "../src/SecurityLogger.h"
+#include "security/SecurityLogger.h"
 #include <cassert>
 #include <fstream>
 #include <iostream>

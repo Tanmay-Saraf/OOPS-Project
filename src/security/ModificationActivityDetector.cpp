@@ -2,7 +2,7 @@
 // Implements ModificationActivityDetector::analyze()
 // Counts Set and Delete requests in a sliding one-second window
 
-#include "ModificationActivityDetector.h"
+#include "security/ModificationActivityDetector.h"
 #include <algorithm>
 #include <cstddef>
 

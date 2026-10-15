@@ -10,7 +10,7 @@
 #include "SecurityLogger.h"
 #include <string>
 
-struct SecurityDecision {z`
+struct SecurityDecision {
     bool allowed;
     std::string reason;
     SecurityState currentState;

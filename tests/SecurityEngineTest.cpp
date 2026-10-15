@@ -1,4 +1,4 @@
-#include "../src/SecurityEngine.h"
+#include "security/SecurityEngine.h"
 #include <cassert>
 #include <iostream>
 
@@ -14,7 +14,7 @@ int main() {
     request.command = oops::Command::Set;
     request.key = "normal_record";
 
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 100; i++) {                             
         decision = engine.processRequest(request);
     }
 

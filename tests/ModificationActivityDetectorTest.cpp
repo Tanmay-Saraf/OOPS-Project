@@ -1,4 +1,4 @@
-#include "../src/ModificationActivityDetector.h"
+#include "security/ModificationActivityDetector.h"
 #include <cassert>
 #include <iostream>
 

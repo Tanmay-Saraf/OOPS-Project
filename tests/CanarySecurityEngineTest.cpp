@@ -1,5 +1,5 @@
 
-#include "../src/SecurityEngine.h"
+#include "security/SecurityEngine.h"
 #include <cassert>
 #include <iostream>
 

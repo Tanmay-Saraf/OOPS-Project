@@ -1,5 +1,5 @@
 
-#include "../src/CanaryDetector.h"
+#include "security/CanaryDetector.h"
 #include <cassert>
 #include <iostream>
 
