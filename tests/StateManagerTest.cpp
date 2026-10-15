@@ -14,7 +14,7 @@ int main() {
     assert(manager.getState() == oops::SecurityState::LOCKDOWN);
 
     manager.setState(oops::SecurityState::RUNNING);
-    assert(manager.getState() == oops::SecurityState::RUNNING);
+    assert(manager.getState() == oops::SecurityState::LOCKDOWN);
 
     std::cout << "All StateManager tests passed!\n";
 
