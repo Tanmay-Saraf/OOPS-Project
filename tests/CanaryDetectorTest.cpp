@@ -1,29 +1,29 @@
+
 #include "../src/CanaryDetector.h"
 #include <cassert>
 #include <iostream>
 
 int main() {
     CanaryDetector detector;
+    oops::Request request{};
 
-    Request request{};
-
-    request.operation = Operation::GET;
-    request.recordId = "canary_001";
+    request.command = oops::Command::Get;
+    request.key = "canary_001";
 
     DetectionResult result = detector.analyze(request);
     assert(!result.Suspicious_flag);
 
-    request.operation = Operation::SET;
+    request.command = oops::Command::Set;
     result = detector.analyze(request);
     assert(result.Suspicious_flag);
     assert(result.HowSevere == Severity::CRITICAL);
 
-    request.operation = Operation::DELETE_RECORD;
+    request.command = oops::Command::Delete;
     result = detector.analyze(request);
     assert(result.Suspicious_flag);
 
-    request.operation = Operation::SET;
-    request.recordId = "normal_record";
+    request.command = oops::Command::Set;
+    request.key = "normal_record";
     result = detector.analyze(request);
     assert(!result.Suspicious_flag);
 

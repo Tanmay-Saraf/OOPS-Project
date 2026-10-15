@@ -5,10 +5,10 @@
 
 int main() {
     SecurityEngine engine;
-    Request request{};
+    oops::Request request{};
 
-    request.operation = Operation::SET;
-    request.recordId = "canary_001";
+    request.command = oops::Command::Set;
+    request.key = "canary_001";
 
     SecurityDecision decision = engine.processRequest(request);
 
@@ -16,18 +16,18 @@ int main() {
     assert(decision.currentState == SecurityState::LOCKDOWN);
     assert(decision.reason == "Attempt to modify or delete canary records");
 
-    Request readRequest{};
-    readRequest.operation = Operation::GET;
-    readRequest.recordId = "normal_record";
+    oops::Request readRequest{};
+    readRequest.command = oops::Command::Get;
+    readRequest.key = "normal_record";
 
     decision = engine.processRequest(readRequest);
 
     assert(decision.allowed);
     assert(decision.currentState == SecurityState::LOCKDOWN);
 
-    Request writeRequest{};
-    writeRequest.operation = Operation::SET;
-    writeRequest.recordId = "normal_record";
+    oops::Request writeRequest{};
+    writeRequest.command = oops::Command::Set;
+    writeRequest.key = "normal_record";
 
     decision = engine.processRequest(writeRequest);
 

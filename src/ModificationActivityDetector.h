@@ -10,6 +10,6 @@ class ModificationActivityDetector : public SecurityDetector{
         std::deque<std::chrono::steady_clock::time_point> modificationTimes;
         size_t threshold = 100;
     public :
-        DetectionResult analyze(const Request& request)override;
+        DetectionResult analyze(const oops::Request& request) override;
 };
 #endif

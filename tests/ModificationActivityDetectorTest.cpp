@@ -1,4 +1,3 @@
-
 #include "../src/ModificationActivityDetector.h"
 #include <cassert>
 #include <iostream>
@@ -6,13 +5,13 @@
 int main() {
     ModificationActivityDetector detector;
 
-    Request request{};
-    request.operation = Operation::GET;
+    oops::Request request{};
+    request.command = oops::Command::Get;
 
     DetectionResult result = detector.analyze(request);
     assert(!result.Suspicious_flag);
 
-    request.operation = Operation::SET;
+    request.command = oops::Command::Set;
 
     for (int i = 0; i < 10; i++) {
         result = detector.analyze(request);

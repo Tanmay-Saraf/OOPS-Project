@@ -1,28 +1,31 @@
+
 #ifndef SECURITY_ENGINE_H
 #define SECURITY_ENGINE_H
 
-#include "SecurityLogger.h"
-#include "Request.h"
+#include "common/Request.hpp"
 #include "DetectionResult.h"
-#include "CanaryDetector.h"
 #include "ModificationActivityDetector.h"
+#include "CanaryDetector.h"
 #include "StateManager.h"
+#include "SecurityLogger.h"
 #include <string>
 
-struct SecurityDecision {
+struct SecurityDecision {z`
     bool allowed;
     std::string reason;
     SecurityState currentState;
 };
+
 class SecurityEngine {
 private:
     ModificationActivityDetector modificationDetector;
     CanaryDetector canaryDetector;
     StateManager stateManager;
     SecurityLogger logger;
+
 public:
     SecurityEngine();
-    SecurityDecision processRequest(const Request& request);
+    SecurityDecision processRequest(const oops::Request& request);
 };
 
 #endif

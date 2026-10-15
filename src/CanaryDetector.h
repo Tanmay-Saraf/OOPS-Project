@@ -8,6 +8,6 @@ class CanaryDetector : public SecurityDetector{
         std::unordered_set<std::string> canaryRecords;
     public :
         CanaryDetector();
-        DetectionResult analyze(const Request& request)override;        
+        DetectionResult analyze(const oops::Request& request) override;     
 };
 #endif

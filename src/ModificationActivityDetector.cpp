@@ -1,9 +1,14 @@
-// Implements ModificationActivityDetector::analyze() Overrides the analyze() interface inherited from SecurityDetector
-// Counts SET and DELETE_RECORD requests in a sliding time window
+
+// Implements ModificationActivityDetector::analyze()
+// Counts Set and Delete requests in a sliding one-second window
+
 #include "ModificationActivityDetector.h"
 #include <algorithm>
 #include <cstddef>
-DetectionResult ModificationActivityDetector::analyze(const Request& request) {
+
+DetectionResult ModificationActivityDetector::analyze(
+    const oops::Request& request
+) {
     DetectionResult result;
     result.Detector = "ModificationActivity";
     result.Suspicious_flag = false;
@@ -11,8 +16,8 @@ DetectionResult ModificationActivityDetector::analyze(const Request& request) {
     result.reason = "Normal activity";
     result.HowSevere = Severity::LOW;
 
-    if (request.operation != Operation::SET &&
-        request.operation != Operation::DELETE_RECORD) {
+    if (request.command != oops::Command::Set &&
+        request.command != oops::Command::Delete) {
         return result;
     }
 

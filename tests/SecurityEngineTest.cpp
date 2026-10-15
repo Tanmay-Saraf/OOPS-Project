@@ -1,18 +1,18 @@
-
 #include "../src/SecurityEngine.h"
 #include <cassert>
 #include <iostream>
 
 int main() {
     SecurityEngine engine;
-    Request request{};
+    oops::Request request{};
 
-    request.operation = Operation::GET;
+    request.command = oops::Command::Get;
 
     SecurityDecision decision = engine.processRequest(request);
     assert(decision.allowed);
 
-    request.operation = Operation::SET;
+    request.command = oops::Command::Set;
+    request.key = "normal_record";
 
     for (int i = 0; i < 100; i++) {
         decision = engine.processRequest(request);
