@@ -1,18 +1,26 @@
-
-// Implements ModificationActivityDetector::analyze()
-// Counts Set and Delete requests in a sliding one-second window
-
 #include "security/ModificationActivityDetector.h"
-#include <algorithm>
-#include <cstddef>
+#include <stdexcept>
+
+ModificationActivityDetector::ModificationActivityDetector(
+    std::size_t threshold,
+    std::chrono::milliseconds window
+) : threshold(threshold), window(window) {
+    if (threshold == 0) {
+        throw std::invalid_argument("Threshold must be greater than zero");
+    }
+
+    if (window <= std::chrono::milliseconds::zero()) {
+        throw std::invalid_argument("Window must be positive");
+    }
+}
 
 DetectionResult ModificationActivityDetector::analyze(
     const oops::Request& request
 ) {
     DetectionResult result;
     result.Detector = "ModificationActivity";
-    result.Suspicious_flag = false;
     result.Score = 0;
+    result.Suspicious_flag = false;
     result.reason = "Normal activity";
     result.HowSevere = Severity::LOW;
 
@@ -21,14 +29,16 @@ DetectionResult ModificationActivityDetector::analyze(
         return result;
     }
 
-    auto now = std::chrono::steady_clock::now();
-    modificationTimes.push_back(now);
+    std::lock_guard<std::mutex> lock(detectorMutex);
+
+    const auto now = Clock::now();
 
     while (!modificationTimes.empty() &&
-           std::chrono::duration_cast<std::chrono::milliseconds>(
-               now - modificationTimes.front()).count() > 1000) {
+           now - modificationTimes.front() >= window) {
         modificationTimes.pop_front();
     }
+
+    modificationTimes.push_back(now);
 
     if (modificationTimes.size() >= threshold) {
         result.Suspicious_flag = true;

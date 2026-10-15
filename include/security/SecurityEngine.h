@@ -1,4 +1,3 @@
-
 #ifndef SECURITY_ENGINE_H
 #define SECURITY_ENGINE_H
 
@@ -6,8 +5,10 @@
 #include "DetectionResult.h"
 #include "ModificationActivityDetector.h"
 #include "CanaryDetector.h"
+#include "EntropyDetector.h"
 #include "StateManager.h"
 #include "SecurityLogger.h"
+#include <mutex>
 #include <string>
 
 namespace oops {
@@ -20,8 +21,10 @@ struct SecurityDecision {
 
 class SecurityEngine {
 private:
+    std::mutex requestMutex;
     ModificationActivityDetector modificationDetector;
     CanaryDetector canaryDetector;
+    EntropyDetector entropyDetector;
     StateManager stateManager;
     SecurityLogger logger;
 
