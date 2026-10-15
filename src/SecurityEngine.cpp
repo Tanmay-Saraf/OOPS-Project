@@ -1,6 +1,8 @@
-// Implements SecurityEngine::processRequest().
-// Uses StateManager to inspect and update security state. Uses ModificationActivityDetector to analyze requests.
 #include "SecurityEngine.h"
+
+SecurityEngine::SecurityEngine()
+    : logger("security.log") {}
+
 SecurityDecision SecurityEngine::processRequest(const Request& request) {
     SecurityState state = stateManager.getState();
 
@@ -9,12 +11,17 @@ SecurityDecision SecurityEngine::processRequest(const Request& request) {
             return {true, "Read allowed during lockdown", state};
         }
 
+        logger.logEvent("REQUEST_BLOCKED", "Database is in lockdown");
+
         return {false, "Database is in lockdown", state};
     }
+
     DetectionResult canaryResult = canaryDetector.analyze(request);
 
     if (canaryResult.Suspicious_flag) {
         stateManager.setState(SecurityState::LOCKDOWN);
+
+        logger.logEvent("CANARY_ALERT", canaryResult.reason);
 
         return {
             false,
@@ -22,14 +29,18 @@ SecurityDecision SecurityEngine::processRequest(const Request& request) {
             stateManager.getState()
         };
     }
-    DetectionResult result = modificationDetector.analyze(request);
 
-    if (result.Suspicious_flag) {
+    DetectionResult modificationResult =
+        modificationDetector.analyze(request);
+
+    if (modificationResult.Suspicious_flag) {
         stateManager.setState(SecurityState::SUSPECTED);
+
+        logger.logEvent("MODIFICATION_ALERT", modificationResult.reason);
 
         return {
             false,
-            result.reason,
+            modificationResult.reason,
             stateManager.getState()
         };
     }

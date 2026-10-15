@@ -1,5 +1,7 @@
 #ifndef SECURITY_ENGINE_H
 #define SECURITY_ENGINE_H
+
+#include "SecurityLogger.h"
 #include "Request.h"
 #include "DetectionResult.h"
 #include "CanaryDetector.h"
@@ -17,8 +19,9 @@ private:
     ModificationActivityDetector modificationDetector;
     CanaryDetector canaryDetector;
     StateManager stateManager;
-
+    SecurityLogger logger;
 public:
+    SecurityEngine();
     SecurityDecision processRequest(const Request& request);
 };
 
