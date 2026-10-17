@@ -1,15 +1,10 @@
+#pragma once
 
-#ifndef STATE_MANAGER_H
-#define STATE_MANAGER_H
-#include <mutex>    
+#include "security/SecurityState.hpp"
+
+#include <mutex>
 
 namespace oops {
-
-enum class SecurityState {
-    RUNNING,
-    SUSPECTED,
-    LOCKDOWN
-};
 
 class StateManager {
 private:
@@ -23,9 +18,11 @@ public:
     StateManager& operator=(const StateManager&) = delete;
 
     SecurityState getState() const;
-    void setState(SecurityState newState);
+
+    // State transitions are intentionally monotonic. There is no public
+    // transition back to RUNNING; recovery needs a trusted future API.
+    void markSuspected();
+    void enterLockdown();
 };
 
 }
-
-#endif

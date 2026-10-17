@@ -1,27 +1,67 @@
 # Ransomware-Resilient Database System
 
-A fast, secure data storage system designed specifically to survive and defeat ransomware attacks.
+This repository contains the Security & Defense component of a broader
+ransomware-resilient database project. The security component can evaluate
+parsed requests and return an approval/denial decision; the full Network Guard,
+Memory Engine, and Disk Storage & Recovery integration must be validated
+separately before the project can claim end-to-end database recovery behavior.
 
-## The Problem
-When a ransomware attack hits an organization, the damage happens because traditional databases blindly follow orders. If a hacker's script says "overwrite all user data with random encrypted text," a normal database does exactly that, permanently destroying the original files. Administrators usually only realize they are under attack when it is already too late.
+## Security & Defense capabilities
 
-## Our Solution
-We built a custom database that removes the ability to "overwrite" anything. Instead of erasing old information when an update happens, our system uses an **append-only architecture**. Every change is simply added as a new entry at the end of a timeline. 
+- Canary-record detection for configured canary keys.
+- Sliding-window modification-rate, per-minute volume, and distinct-key signals.
+- Shannon entropy analysis for sufficiently long `SET` values.
+- Monotonic `RUNNING` → `SUSPECTED` → `LOCKDOWN` state escalation.
+- In-process `oops::SecurityEngine::processRequest(const oops::Request&)` API.
+- Caller-safe decision reasons and a thread-protected internal security log.
+- `LOCKDOWN` permits only `GET` through the security engine.
+- `SAVE`, `RECOVER`, `PING`, `QUIT`, invalid, and unknown commands are not
+  approved for forwarding by this engine. Network Guard owns protocol-only
+  commands and must handle `PING`/`QUIT` itself.
 
-If a hacker successfully encrypts or scrambles the current records, the original data is completely safe. Administrators can simply roll the database back to the exact millisecond before the attack began.
+## Build and test
 
-## Key Features
+Requires CMake 3.16+ and a C++20 compiler.
 
-* **Never-Overwrite Architecture:** Data is never deleted or replaced. Every change is tracked as a new version, creating a permanent, indestructible history of your information.
-* **Time-Travel Recovery:** If a ransomware attack scrambles your data today, you can instantly hit "undo" and restore the database to exactly how it looked yesterday.
-* **Smart Security Tripwires:** The system actively watches for unnatural spikes in data changes or highly randomized, encrypted text. 
-* **Automatic Lockdown:** If a tripwire is triggered or a hidden "canary" record is touched by malware, the system instantly physically locks down. It stops accepting new data to prevent further damage, while keeping the system online so administrators can safely extract the historical files.
+```powershell
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
 
-## How It Works
+The tests use always-active `TEST_CHECK` assertions, so checks remain enabled
+in Release builds as well as Debug builds.
 
-Our system is divided into four main parts, working together to balance incredible speed with unbreakable security:
+## Public API example
 
-1. **Network Guard:** Listens for incoming connections over the network and safely manages multiple users trying to save data at the exact same time without crashing.
-2. **Security & Defense Engine:** Inspects every single piece of data before it is saved. If it detects malicious behavior, it acts as a circuit breaker, instantly throwing the entire system into Lockdown Mode.
-3. **The Memory Engine:** When the system is running, the active data lives in the computer's fast memory (RAM) so legitimate users can search and retrieve their files instantly without waiting.
-4. **Disk Storage & Recovery:** The permanent safety net. It safely logs every single command to the hard drive in real-time. If the power goes out or the system needs to restart, this engine reads the timeline and perfectly rebuilds the database in seconds.
+Build and run the example with:
+
+```powershell
+cmake --build build --target SecurityEngineExample
+.\build\SecurityEngineExample.exe
+```
+
+The example shows an ordinary `GET`, a canary-triggered lockdown, a permitted
+`GET` during lockdown, and a denied write during lockdown. Security approval
+is not database execution: an allowed request may still fail in the Memory
+Engine.
+
+## Installable CMake target
+
+You can install the library and its public headers with:
+
+```powershell
+cmake --install build --prefix install
+```
+
+The exported target is `oops::security_engine`. The install contains the stable
+public headers only; detector and state-manager implementation headers remain
+internal to this component.
+
+## Security limitations
+
+No trusted client authentication/authorization or privileged recovery/unlock
+mechanism is implemented. Detector thresholds are initial policy values, not
+empirically calibrated production thresholds. This component by itself does
+not guarantee append-only persistence, rollback, or data recovery. Those
+claims require the completed and tested storage and recovery modules.

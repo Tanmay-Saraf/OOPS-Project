@@ -1,5 +1,5 @@
 #include "security/EntropyDetector.h"
-#include <cassert>
+#include "TestCheck.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -11,31 +11,31 @@ int main() {
 
     request.value = "aaaaaaaaaaaaaaaaaaaaaaaa";
     DetectionResult result = detector.analyze(request);
-    assert(!result.Suspicious_flag);
+    TEST_CHECK(!result.Suspicious_flag);
 
     request.value = "hellohellohellohello";
     result = detector.analyze(request);
-    assert(!result.Suspicious_flag);
+    TEST_CHECK(!result.Suspicious_flag);
 
     request.value = "aZ8!mQ2@xL5#pR9$wT4^nB7&cD6*eF0";
     result = detector.analyze(request);
-    assert(result.Suspicious_flag);
-    assert(result.HowSevere == Severity::MEDIUM);
-    assert(result.Score == 60);
+    TEST_CHECK(result.Suspicious_flag);
+    TEST_CHECK(result.HowSevere == Severity::MEDIUM);
+    TEST_CHECK(result.Score == 60);
 
     request.command = oops::Command::Get;
     result = detector.analyze(request);
-    assert(!result.Suspicious_flag);
+    TEST_CHECK(!result.Suspicious_flag);
 
     request.command = oops::Command::Set;
     request.value = "A9!x";
     result = detector.analyze(request);
-    assert(!result.Suspicious_flag);
+    TEST_CHECK(!result.Suspicious_flag);
 
     EntropyDetector configurable(1.0, 4);
     request.value = "abcd";
     result = configurable.analyze(request);
-    assert(result.Suspicious_flag);
+    TEST_CHECK(result.Suspicious_flag);
 
     bool invalidThresholdRejected = false;
 
@@ -45,7 +45,7 @@ int main() {
         invalidThresholdRejected = true;
     }
 
-    assert(invalidThresholdRejected);
+    TEST_CHECK(invalidThresholdRejected);
 
     std::cout << "All EntropyDetector tests passed!\n";
     return 0;

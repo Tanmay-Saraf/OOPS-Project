@@ -1,4 +1,3 @@
-
 #include "security/StateManager.h"
 
 namespace oops {
@@ -8,25 +7,17 @@ SecurityState StateManager::getState() const {
     return currentState;
 }
 
-void StateManager::setState(SecurityState newState) {
+void StateManager::markSuspected() {
     std::lock_guard<std::mutex> lock(stateMutex);
 
-    if (newState == currentState) {
-        return;
-    }
-
     if (currentState == SecurityState::RUNNING) {
-        if (newState == SecurityState::SUSPECTED ||
-            newState == SecurityState::LOCKDOWN) {
-            currentState = newState;
-        }
-        return;
+        currentState = SecurityState::SUSPECTED;
     }
+}
 
-    if (currentState == SecurityState::SUSPECTED &&
-        newState == SecurityState::LOCKDOWN) {
-        currentState = newState;
-    }
+void StateManager::enterLockdown() {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    currentState = SecurityState::LOCKDOWN;
 }
 
 }

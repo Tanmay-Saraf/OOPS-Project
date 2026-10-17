@@ -1,38 +1,35 @@
 #include "security/SecurityLogger.h"
-#include <cassert>
+
+#include "TestCheck.hpp"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
-#include <filesystem>
-#include <stdexcept>
-#include <thread>
-#include <vector>
+
 int main() {
-    const std::string filename = "security_test.log";
+    const auto uniqueSuffix = std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count()
+    );
+    const auto testDirectory = std::filesystem::temp_directory_path() /
+        ("oops_security_logger_test_" + uniqueSuffix);
+    std::filesystem::create_directories(testDirectory);
+    const auto logPath = testDirectory / "security_test.log";
+    const std::string filename = logPath.string();
 
     {
         SecurityLogger logger(filename);
-
-        logger.logEvent(
-            "CANARY_ALERT",
-            "Canary record modification"
-        );
-
-        logger.logEvent(
-            "REQUEST_BLOCKED",
-            "Database is in lockdown"
-        );
+        logger.logEvent("CANARY_ALERT", "Canary record modification");
+        logger.logEvent("REQUEST_BLOCKED", "Database is in lockdown");
 
         std::vector<std::thread> workers;
-
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 4; ++i) {
             workers.emplace_back([&logger, i]() {
-                for (int j = 0; j < 25; j++) {
+                for (int j = 0; j < 25; ++j) {
                     logger.logEvent(
                         "CONCURRENT_TEST",
                         "worker=" + std::to_string(i) +
@@ -41,49 +38,34 @@ int main() {
                 }
             });
         }
-
         for (auto& worker : workers) {
             worker.join();
         }
     }
 
     std::ifstream file(filename);
-    assert(file.is_open());
-
-    std::string content(
+    TEST_CHECK(file.is_open());
+    const std::string content(
         (std::istreambuf_iterator<char>(file)),
         std::istreambuf_iterator<char>()
     );
+    file.close();
 
-    assert(content.find("CANARY_ALERT") != std::string::npos);
-    assert(content.find("Canary record modification") != std::string::npos);
-    assert(content.find("REQUEST_BLOCKED") != std::string::npos);
-    assert(content.find("Database is in lockdown") != std::string::npos);
-
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 25; j++) {
+    TEST_CHECK(content.find("CANARY_ALERT") != std::string::npos);
+    TEST_CHECK(content.find("Canary record modification") != std::string::npos);
+    TEST_CHECK(content.find("REQUEST_BLOCKED") != std::string::npos);
+    TEST_CHECK(content.find("Database is in lockdown") != std::string::npos);
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 25; ++j) {
             const std::string entry =
                 "worker=" + std::to_string(i) +
                 " item=" + std::to_string(j);
-
-            assert(content.find(entry) != std::string::npos);
+            TEST_CHECK(content.find(entry) != std::string::npos);
         }
     }
 
-    file.close();
-
-    const auto missingParent =
-        std::filesystem::temp_directory_path() /
-        ("oops_logger_missing_" +
-         std::to_string(
-             std::chrono::steady_clock::now()
-                 .time_since_epoch().count()
-         ));
-
-    std::filesystem::remove_all(missingParent);
-
+    const auto missingParent = testDirectory / "missing_parent";
     bool openFailureReported = false;
-
     try {
         SecurityLogger invalidLogger(
             (missingParent / "security.log").string()
@@ -91,10 +73,9 @@ int main() {
     } catch (const std::runtime_error&) {
         openFailureReported = true;
     }
+    TEST_CHECK(openFailureReported);
 
-    assert(openFailureReported);
-
+    std::filesystem::remove_all(testDirectory);
     std::cout << "All SecurityLogger tests passed!\n";
-
     return 0;
 }

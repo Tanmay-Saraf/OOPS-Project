@@ -1,0 +1,13 @@
+ include/security/EntropyDetector.h              |  21 [32m+++++[m
+ include/security/ModificationActivityDetector.h |  31 [32m+++++[m[31m---[m
+ include/security/SecurityEngine.h               |   7 [32m+[m[31m-[m
+ include/security/SecurityLogger.h               |  32 [32m+++++[m[31m---[m
+ src/security/EntropyDetector.cpp                |  74 [32m++++++++++++++++++[m
+ src/security/ModificationActivityDetector.cpp   |  34 [32m+++++[m[31m---[m
+ src/security/SecurityEngine.cpp                 |  77 [32m++++++++++++++[m[31m----[m
+ src/security/SecurityLogger.cpp                 |  58 [32m+++++++++++[m[31m---[m
+ tests/EntropyDetectorTest.cpp                   |  52 [32m++++++++++++[m
+ tests/ModificationActivityDetectorTest.cpp      |  48 [32m+++++++++++[m[31m-[m
+ tests/SecurityEngineTest.cpp                    | 100 [32m++++++++++++++++++++++[m[31m--[m
+ tests/SecurityLoggerTest.cpp                    |  78 [32m+++++++++++++++++[m[31m-[m
+ 12 files changed, 541 insertions(+), 71 deletions(-)

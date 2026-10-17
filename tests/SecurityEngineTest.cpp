@@ -1,6 +1,6 @@
 
 #include "security/SecurityEngine.h"
-#include <cassert>
+#include "TestCheck.hpp"
 #include <iostream>
 #include <atomic>
 #include <thread>
@@ -14,7 +14,7 @@ int main() {
 
     request.command = Command::Get;
     SecurityDecision decision = engine.processRequest(request);
-    assert(decision.allowed);
+    TEST_CHECK(decision.allowed);
 
     request.command = Command::Set;
     request.key = "normal_record";
@@ -24,15 +24,15 @@ int main() {
         decision = engine.processRequest(request);
     }
 
-    assert(!decision.allowed);
-    assert(decision.currentState == SecurityState::SUSPECTED);
+    TEST_CHECK(!decision.allowed);
+    TEST_CHECK(decision.currentState == SecurityState::SUSPECTED);
 
     request.key = "canary_001";
     decision = engine.processRequest(request);
 
-    assert(!decision.allowed);
-    assert(decision.currentState == SecurityState::LOCKDOWN);
-    assert(decision.reason == "Attempt to modify or delete canary records");
+    TEST_CHECK(!decision.allowed);
+    TEST_CHECK(decision.currentState == SecurityState::LOCKDOWN);
+    TEST_CHECK(decision.reason == "Request denied by canary protection");
 
     SecurityEngine entropyOnlyEngine;
     Request entropyRequest{};
@@ -44,10 +44,10 @@ int main() {
     SecurityDecision entropyDecision =
         entropyOnlyEngine.processRequest(entropyRequest);
 
-    assert(entropyDecision.allowed);
-    assert(entropyDecision.currentState == SecurityState::RUNNING);
-    assert(entropyDecision.reason ==
-           "Request allowed; high-entropy value observed");
+    TEST_CHECK(entropyDecision.allowed);
+    TEST_CHECK(entropyDecision.currentState == SecurityState::RUNNING);
+    TEST_CHECK(entropyDecision.reason ==
+           "Request allowed; entropy alert recorded");
 
     SecurityEngine combinedEngine;
     Request combinedRequest{};
@@ -58,16 +58,16 @@ int main() {
 
     for (int i = 0; i < 99; i++) {
         entropyDecision = combinedEngine.processRequest(combinedRequest);
-        assert(entropyDecision.allowed);
+        TEST_CHECK(entropyDecision.allowed);
     }
 
     combinedRequest.value = "aZ8!mQ2@xL5#pR9$wT4^nB7&cD6*eF0";
     entropyDecision = combinedEngine.processRequest(combinedRequest);
 
-    assert(!entropyDecision.allowed);
-    assert(entropyDecision.currentState == SecurityState::LOCKDOWN);
-    assert(entropyDecision.reason ==
-           "Combined modification-rate and entropy alerts");
+    TEST_CHECK(!entropyDecision.allowed);
+    TEST_CHECK(entropyDecision.currentState == SecurityState::LOCKDOWN);
+    TEST_CHECK(entropyDecision.reason ==
+           "Request denied due to correlated security alerts");
 
     SecurityEngine concurrentEngine;
     std::atomic<int> allowedRequests{0};
@@ -100,15 +100,15 @@ int main() {
         worker.join();
     }
 
-    assert(allowedRequests + blockedRequests == 100);
-    assert(blockedRequests >= 1);
+    TEST_CHECK(allowedRequests + blockedRequests == 100);
+    TEST_CHECK(blockedRequests >= 1);
 
     Request statusRequest{};
     statusRequest.command = Command::Status;
     SecurityDecision status =
         concurrentEngine.processRequest(statusRequest);
 
-    assert(status.currentState == SecurityState::SUSPECTED);
+    TEST_CHECK(status.currentState == SecurityState::SUSPECTED);
 
     std::cout << "All SecurityEngine tests passed!\n";
     return 0;
