@@ -7,7 +7,7 @@
 namespace oops {
 
     struct Connection {
-        UniqueFd fd = -1;
+        UniqueFd fd;
         std::uint64_t generation = 0;
         std::string receive_buffer;
         std::string send_buffer;

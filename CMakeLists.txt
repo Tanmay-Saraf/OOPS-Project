@@ -13,11 +13,12 @@ include(CTest)
 # Find GoogleTest
 find_package(GTest REQUIRED)
 
-# Build the request parser as a reusable library
+# Build the networking library
 add_library(request_parser
     src/network/RequestParser.cpp
     src/network/Server.cpp
     src/network/UniqueFd.cpp
+    src/network/ResponseSerializer.cpp
 )
 
 target_include_directories(request_parser PUBLIC
@@ -32,6 +33,15 @@ add_executable(test_parses
 target_link_libraries(test_parses PRIVATE
     request_parser
     GTest::gtest_main
+)
+
+# Temporary executable for testing the TCP server
+add_executable(server_test
+    src/network/server_main.cpp
+)
+
+target_link_libraries(server_test PRIVATE
+    request_parser
 )
 
 # Discover and register individual GoogleTests

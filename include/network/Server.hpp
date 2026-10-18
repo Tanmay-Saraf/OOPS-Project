@@ -6,6 +6,7 @@
 #include <network/Connection.hpp>
 #include <cstdint>
 #include <sys/epoll.h>
+#include "common/Request.hpp"
 
 namespace oops {
 
@@ -28,6 +29,9 @@ namespace oops {
         void setup();
         void acceptClients();
         void handleClientEvent(const epoll_event& event);
+        void handleRequest(const Request& request, int client_fd);
+        void handleWriteEvent(int fd);
+        void updateClientEvents(int fd, std::uint32_t flags);
 
         std::unordered_map<int, Connection> connections_;
 

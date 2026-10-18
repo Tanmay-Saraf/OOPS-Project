@@ -8,6 +8,10 @@
 #include <sys/epoll.h>
 #include <cerrno>
 #include <utility>
+#include "network/RequestParser.hpp"
+#include "common/Response.hpp"
+#include "network/ResponseSerializer.hpp"
+#include <iostream>
 
 namespace oops{
 
@@ -32,7 +36,7 @@ namespace oops{
         struct sockaddr_in address {};
         address.sin_family = AF_INET;
         address.sin_port = htons(port_);
-        address.sin_addr.s_addr = htonl(INADDR_ANY); 
+        address.sin_addr.s_addr = htonl(INADDR_ANY);
 
         if(bind(server_fd_.get(), (sockaddr*)&address, sizeof(address)) == -1){
             throw std::runtime_error("Failed to bind server to ip and port");
@@ -94,17 +98,18 @@ namespace oops{
                 throw std::runtime_error("Could not make client non blocking");
             }
 
+            Connection conn;
+            conn.fd = std::move(client);
+            conn.generation = next_generation_++;
+
             epoll_event client_event{};
-            client_event.data.fd = client.get();
+            client_event.data.u64 = (static_cast<std::uint64_t>(conn.generation) << 32) | static_cast<std::uint32_t>(conn.fd.get());
             client_event.events = EPOLLIN;
 
             if(epoll_ctl(epoll_fd_.get(), EPOLL_CTL_ADD, client.get(), &client_event) == -1){
                 throw std::runtime_error("Failed to add client to epoll");
             }
 
-            Connection conn;
-            conn.fd = std::move(client);
-            conn.generation = next_generation_++;
             connections_.emplace(client_fd, std::move(conn));
         }
 
@@ -116,9 +121,9 @@ namespace oops{
         char buffer[buffer_size];
         int bytes_recvd;
 
-        auto it = connections_.find(event.data.fd); 
+        auto it = connections_.find(event.data.fd);
 
-        if(it == connections_.end()) throw std::runtime_error("Client not found");
+        if(it == connections_.end()) return;
 
         Connection& conn = it->second;
 
@@ -127,7 +132,28 @@ namespace oops{
 
             if(bytes_recvd > 0){
                 conn.receive_buffer.append(buffer, bytes_recvd);
-                //Parsing logic
+
+                size_t pos;
+                std::string &curr_receive_buffer = conn.receive_buffer;
+                while((pos = curr_receive_buffer.find('\n')) != std::string::npos){
+
+                    std::string cmd = curr_receive_buffer.substr(0, pos);
+                    curr_receive_buffer.erase(0, pos+1);
+                    if (!cmd.empty() && cmd.back() == '\r') {
+                        cmd.pop_back();
+                    }
+
+                    Request request = parseRequest(cmd);
+
+                    if(request.command == Command::Invalid) std::cout<<"Invalid\n";
+                    else{
+                        std::cout << "Received valid request: " << cmd << '\n';
+                        handleRequest(request, conn.fd.get());
+                    }
+
+                }
+
+                continue;
             }
 
             if(bytes_recvd == 0){
@@ -141,6 +167,11 @@ namespace oops{
                     continue;
                 }
                 if(errno == EAGAIN || errno == EWOULDBLOCK) break;
+
+                int fd = conn.fd.get();
+                epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, fd, nullptr);
+                connections_.erase(fd);
+                return;
             }
         }
 
@@ -170,12 +201,90 @@ namespace oops{
                 if(event_fd == server_fd_.get()){
                     acceptClients();
                 }else {
-                    //receive data
+                    if(events[i].events & EPOLLIN) handleClientEvent(events[i]);
+                    if(events[i].events & EPOLLOUT) handleWriteEvent(event_fd);
                 }
 
             }
 
         }
+    }
+
+    void Server::handleRequest(const Request& request, int client_fd) {
+
+        auto it = connections_.find(client_fd);
+
+        if(it == connections_.end()) return;
+
+        Connection& conn = it->second;
+
+        Response response;
+
+        if(request.command == Command::Ping) {
+            response.status = ResponseStatus::Success;
+            response.message = "PONG";
+            conn.send_buffer.append(serializeResponse(response));
+            updateClientEvents(it->first, EPOLLIN | EPOLLOUT);
+        }
+
+
+    }
+
+    void Server::handleWriteEvent(int fd) {
+
+        auto it = connections_.find(fd);
+
+        if (it == connections_.end()) {
+            return;
+        }
+
+        Connection& conn = it->second;
+        std::string &send_buffer = conn.send_buffer;
+        ssize_t sent_bytes;
+
+        while(true){
+
+            if(send_buffer.empty()) {
+                updateClientEvents(conn.fd.get(), EPOLLIN);
+                break;
+            }
+            sent_bytes = send(conn.fd.get(), send_buffer.data(), send_buffer.size(), MSG_NOSIGNAL);
+
+            if(sent_bytes > 0) {
+                send_buffer.erase(0, sent_bytes);
+                continue;
+            } else if(sent_bytes == 0) {
+                epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn.fd.get(), nullptr);
+                connections_.erase(conn.fd.get());
+                return;
+            }
+            else if(sent_bytes == -1) {
+
+                if(errno == EINTR){
+                    continue;
+                }
+                if(errno == EAGAIN || errno == EWOULDBLOCK) break;
+
+                int fd = conn.fd.get();
+                epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, fd, nullptr);
+                connections_.erase(fd);
+                return;
+            }
+
+        }
+
+    }
+
+    void Server::updateClientEvents(int fd, std::uint32_t flags){
+
+        epoll_event event{};
+        event.data.fd = fd;
+        event.events = flags;
+
+        if(epoll_ctl(epoll_fd_.get(), EPOLL_CTL_MOD, fd, &event) == -1){
+            throw std::runtime_error("Modifying Client Events failed");
+        }
+
     }
 
 }
