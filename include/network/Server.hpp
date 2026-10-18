@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <sys/epoll.h>
 #include "common/Request.hpp"
+#include "security/SecurityEngine.hpp"
 
 namespace oops {
 
@@ -25,6 +26,7 @@ namespace oops {
         uint64_t next_generation_ = 0;
         UniqueFd server_fd_;
         UniqueFd epoll_fd_;
+        SecurityEngine security_engine_;
 
         void setup();
         void acceptClients();

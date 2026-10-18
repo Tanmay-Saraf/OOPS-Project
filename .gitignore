@@ -19,7 +19,12 @@
 /cmake_install.cmake
 /compile_commands.json
 /Testing/
-/tests/
+/tests/*
+!/tests/*.cpp
+!/tests/*.hpp
+!/tests/network/
+/tests/network/*
+!/tests/network/*.cpp
 
 # CMake-generated files
 Makefile

@@ -12,6 +12,7 @@
 #include "common/Response.hpp"
 #include "network/ResponseSerializer.hpp"
 #include <iostream>
+#include "security/SecurityEngine.hpp"
 
 namespace oops{
 
