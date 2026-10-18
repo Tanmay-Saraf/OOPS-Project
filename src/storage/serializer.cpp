@@ -185,7 +185,16 @@ namespace storage{
 
         // Timestamp
         std::uint64_t timestamp = read64(bytes , 21);
+        
+        // Checksum and its validation
+        std::uint32_t stored_checksum = read32(bytes , total_bytes - 4);
+        std::vector<std::uint8_t>temp(bytes.begin() , bytes.end()-4);
+        std::uint32_t calculated_checksum = calculate_crc32(temp);
 
+        if(stored_checksum != calculated_checksum){
+            return std::nullopt;
+        }
+        
         // Key length 
         std::uint32_t key_size = read32(bytes , 29);
 
@@ -202,21 +211,13 @@ namespace storage{
         std::uint32_t value_size = read32(bytes , 33+key_size);
 
         // Value length validation
-        if(value_size > total_bytes - 4 - 37 - key_size){
+        if(value_size != total_bytes - 4 - 37 - key_size){
             return std::nullopt;
         }
 
         // Actual value
         std::string value = std::string(bytes.begin()+37+key_size , bytes.begin()+37+key_size+value_size);
 
-        // Checksum and its validation
-        std::uint32_t stored_checksum = read32(bytes , total_bytes - 4);
-        std::vector<std::uint8_t>temp(bytes.begin() , bytes.end()-4);
-        std::uint32_t calculated_checksum = calculate_crc32(temp);
-
-        if(stored_checksum != calculated_checksum){
-            return std::nullopt;
-        }
 
         return WalRecord {
             static_cast<RecordType>(type),

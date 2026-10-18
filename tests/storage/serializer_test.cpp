@@ -5,6 +5,7 @@
 #include <iostream>
 #include <vector>
 #include <optional>
+#include <string>
 
 int main() {
     storage::WalRecord record{
@@ -85,11 +86,70 @@ int main() {
 
     // Invalid type test
     std::vector<std::uint8_t> invalid_type_bytes = bytes;
-    invalid_type_bytes[4] = static_cast<uint8_t>(255);
+    invalid_type_bytes[4] = static_cast<std::uint8_t>(255);
 
     std::optional<storage::WalRecord> invalid_type_record = storage::deserialize(invalid_type_bytes);
 
     assert(!invalid_type_record);
+
+    // Empty string test 
+    storage::WalRecord empty_record{
+        storage::RecordType::PUT, // Type
+        1,                        // sequence_number
+        100,                      // transaction_id
+        1729000000000,            // timestamp
+        "",                    // key
+        ""                     // value
+    };
+
+    std::vector<std::uint8_t> empty_bytes = storage::serialize(empty_record);
+
+    std::optional<storage::WalRecord> resultant_empty_record = storage::deserialize(empty_bytes);
+
+    assert(resultant_empty_record);
+    assert(resultant_empty_record->key == "");
+    assert(resultant_empty_record->value == "");
+
+
+    // Null byte string
+    storage::WalRecord null_record{
+        storage::RecordType::PUT, // Type
+        1,                        // sequence_number
+        100,                      // transaction_id
+        1729000000000,            // timestamp
+        std::string("c\0t",3),    // key
+        std::string("d\0g",3)     // value
+    };
+
+    std::vector<std::uint8_t> null_bytes = storage::serialize(null_record);
+
+    std::optional<storage::WalRecord> resultant_null_record = storage::deserialize(null_bytes);
+
+    assert(resultant_null_record);
+    assert(resultant_null_record->key.size() == 3);
+    assert(resultant_null_record->value.size() == 3);
+    assert(resultant_null_record->key == std::string("c\0t",3));
+    assert(resultant_null_record->value == std::string("d\0g",3));
+
+    // Maximum payload test 
+
+    storage::WalRecord maximum_payload_record{
+        storage::RecordType::PUT, // Type
+        1,                        // sequence_number
+        100,                      // transaction_id
+        1729000000000,            // timestamp
+        std::string(static_cast<std::size_t>(16*1024*1024-37),'a'),    // key
+        ""                        // value
+    };
+
+    std::vector<std::uint8_t> maximum_payload_bytes = storage::serialize(maximum_payload_record);
+
+    std::optional<storage::WalRecord> res_maximum_payload_record = storage::deserialize(maximum_payload_bytes);
+
+    assert(res_maximum_payload_record);
+    assert(maximum_payload_bytes.size() == 4 + 16 * 1024 * 1024);
+    assert(res_maximum_payload_record->key.size() == 16 * 1024 * 1024 - 37);
+    assert(res_maximum_payload_record->value.empty());
     
     std::cout << "All serializer tests passed!\n";
     return 0;
