@@ -41,6 +41,8 @@ namespace storage{
             if(infile.gcount() == 0 && infile.eof()){
                 return WalReadResult{
                     .records = records,
+                    .status = WalReadStatus::OK,
+                    .error_offset = std::nullopt
                 };
             }
     
