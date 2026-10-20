@@ -25,6 +25,7 @@ struct Request {
     std::string key;
     std::string value;
     std::uint64_t version = 0;
+
 };
 
 } // namespace oops

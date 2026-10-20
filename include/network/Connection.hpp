@@ -11,6 +11,8 @@ namespace oops {
         std::uint64_t generation = 0;
         std::string receive_buffer;
         std::string send_buffer;
+        bool discarding_oversized_request = false;
+        bool close_after_write = false;
     };
 
 }
