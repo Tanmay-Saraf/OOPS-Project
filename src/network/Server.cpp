@@ -3,7 +3,6 @@
 #include "network/RequestParser.hpp"
 #include "network/ResponseSerializer.hpp"
 #include "common/Response.hpp"
-#include "security/SecurityEngine.hpp"
 #include "network/CompletedResponse.hpp"
 #include "network/ThreadSafeQueue.hpp"
 #include "network/ThreadPool.hpp"
@@ -26,7 +25,7 @@
 
 namespace oops{
 
-    Server::Server(int port) : port_(port) {
+    Server::Server(int port, std::unique_ptr<RequestGuard> guard) : port_(port), guard_(std::move(guard)) {
         if (port_ < 1 || port_ > 65535) {
             throw std::invalid_argument("Invalid port number");
         }
@@ -335,7 +334,7 @@ namespace oops{
         const std::uint64_t generation = conn.generation;
 
         thread_pool_->enqueue([request, client_fd, generation, this] () {
-            SecurityDecision decision = security_engine_.processRequest(request);
+            GuardDecision decision = guard_->check(request);
             Response response;
             if(!decision.allowed) {
                 response.message = decision.reason;

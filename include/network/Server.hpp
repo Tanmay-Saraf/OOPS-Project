@@ -3,7 +3,7 @@
 
 #include "network/UniqueFd.hpp"
 #include "common/Request.hpp"
-#include "security/SecurityEngine.hpp"
+#include "network/RequestGuard.hpp"
 #include "network/CompletedResponse.hpp"
 #include "network/ThreadSafeQueue.hpp"
 #include "network/Connection.hpp"
@@ -21,7 +21,7 @@ namespace oops {
     class Server {
     public:
     
-        explicit Server(int port);
+        explicit Server(int port, std::unique_ptr<RequestGuard> guard = std::make_unique<AllowAllGuard>());
         Server(const Server&) = delete;
         Server& operator=(const Server&) = delete;
         ~Server();
@@ -36,7 +36,7 @@ namespace oops {
         UniqueFd server_fd_;
         UniqueFd epoll_fd_;
         UniqueFd response_event_fd_;
-        SecurityEngine security_engine_;
+        std::unique_ptr<RequestGuard> guard_;
         ThreadSafeQueue<CompletedResponse> completed_responses_;
         std::unique_ptr<ThreadPool> thread_pool_;
 
