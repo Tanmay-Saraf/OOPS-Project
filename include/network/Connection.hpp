@@ -1,6 +1,7 @@
 #pragma once
 
 #include "network/UniqueFd.hpp"
+
 #include <cstdint>
 #include <string>
 
@@ -13,6 +14,7 @@ namespace oops {
         std::string send_buffer;
         bool discarding_oversized_request = false;
         bool close_after_write = false;
+        std::uint64_t client_id = 0;
     };
 
 }

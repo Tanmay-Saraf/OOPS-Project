@@ -104,7 +104,7 @@ namespace oops{
 
         while(true){
 
-            int client_fd = accept(server_fd_.get(), nullptr, nullptr);
+            int client_fd = accept4(server_fd_.get(), nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
             if(client_fd == -1){
                 if(errno == EAGAIN || errno == EWOULDBLOCK){
@@ -127,6 +127,11 @@ namespace oops{
             Connection conn;
             conn.fd = std::move(client);
             conn.generation = next_generation_++;
+            conn.client_id = ++next_client_id_;
+
+            auto state = std::make_shared<ClientRequestState>();
+            state->client_id = conn.client_id;
+            client_states_.emplace(conn.client_id, std::move(state));
 
             epoll_event client_event{};
             client_event.data.u64 = (static_cast<std::uint64_t>(conn.generation) << 32) | static_cast<std::uint32_t>(conn.fd.get());
@@ -218,6 +223,9 @@ namespace oops{
             }
 
             if(bytes_recvd == 0){
+
+                auto client_id = conn.client_id;
+
                 epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn.fd.get(), nullptr);
                 connections_.erase(conn.fd.get());
                 return;
@@ -280,11 +288,26 @@ namespace oops{
 
                     while(completed_responses_.tryPop(completed)) {
 
+                        if(completed.request_finished){
+
+                            auto state_it = client_states_.find(completed.client_id);
+
+                            if(state_it != client_states_.end()) {
+                                state_it->second->request_processing = false;
+                                dispatchNextRequest(completed.client_id);
+                            }
+
+                        }
+
                         auto it = connections_.find(completed.client_fd);
 
                         if(it == connections_.end()) continue;
 
                         if(completed.generation != it->second.generation) continue;
+
+                        if(completed.command == Command::Quit && completed.response.status == ResponseStatus::Success) {
+                            it->second.close_after_write = true;
+                        }
 
                         it->second.send_buffer.append(serializeResponse(completed.response));
                         updateClientEvents(completed.client_fd, EPOLLIN | EPOLLOUT);
@@ -306,59 +329,110 @@ namespace oops{
         }
     }
 
-    void Server::handleRequest(const Request& request, int client_fd) {
+        void Server::handleRequest(const Request& request, int client_fd) {
 
-        auto it = connections_.find(client_fd);
+            auto it = connections_.find(client_fd);
+            if(it == connections_.end()) return;
 
-        if(it == connections_.end()) return;
+            Connection& conn = it->second;
 
-        Connection& conn = it->second;
+            auto state_it = client_states_.find(conn.client_id);
+            if (state_it == client_states_.end()) return;
 
-        Response response;
+            state_it->second->pending_requests.push(request);
+            dispatchNextRequest(conn.client_id);
 
-        if(request.command == Command::Ping) {
-            response.status = ResponseStatus::Success;
-            response.message = "PONG";
-            conn.send_buffer.append(serializeResponse(response));
-            updateClientEvents(it->first, EPOLLIN | EPOLLOUT);
-            return;
-        }else if(request.command == Command::Quit) {
-            response.status = ResponseStatus::Success;
-            response.message = "BYE";
-            conn.send_buffer.append(serializeResponse(response));
-            conn.close_after_write = true;
-            updateClientEvents(it->first, EPOLLIN | EPOLLOUT);
+        }
+
+    void Server::dispatchNextRequest(std::uint64_t client_id) {
+        
+        auto it = client_states_.find(client_id);
+
+        if(it == client_states_.end()) return;
+
+        auto& state = *it->second;
+
+        if(state.request_processing) return;
+
+        auto conn_it = std::find_if(connections_.begin(), connections_.end(), [client_id](const auto& entry) {
+            return entry.second.client_id == client_id;
+        });
+
+        if(state.pending_requests.empty()) {
+
+            if(conn_it == connections_.end()) {
+                client_states_.erase(it);
+            }
+
             return;
         }
 
-        const std::uint64_t generation = conn.generation;
+        Request request = state.pending_requests.front();
+        state.pending_requests.pop();
 
-        thread_pool_->enqueue([request, client_fd, generation, this] () {
-            GuardDecision decision = guard_->check(request);
-            Response response;
-            if(!decision.allowed) {
-                response.message = decision.reason;
-                response.status = ResponseStatus::PermissionDenied;
+        state.request_processing = true;
+        auto state_ptr = it->second;
+
+        int client_fd = -1;
+        std::uint64_t generation = 0;
+
+        if(conn_it != connections_.end()) {
+            client_fd = conn_it->first;
+            generation = conn_it->second.generation;
+        }
+
+        try {
+            thread_pool_->enqueue([this, request, client_id, state_ptr, client_fd, generation] () {
+
+                GuardDecision decision = guard_->check(request);
+                Response response;
+
+                if(!decision.allowed) {
+
+                    response.message = decision.reason;
+                    response.status = ResponseStatus::PermissionDenied;
+
+                }else {
+
+                    switch(request.command) {
+
+                        case Command::Ping: {
+                            response.status = ResponseStatus::Success;
+                            response.message = "PONG";
+                            break;
+                        }
+                        case Command::Quit: {
+                            response.status = ResponseStatus::Success;
+                            response.message = "BYE";
+                            break;
+                        }
+                        default: {
+                            response.status = ResponseStatus::InternalError;
+                            response.message = "Request processing not implemented";
+                            break;
+                        }
+
+                    }
+
+                }
+                
                 CompletedResponse completedResponse;
                 completedResponse.client_fd = client_fd;
                 completedResponse.generation = generation;
                 completedResponse.response = response;
+                completedResponse.client_id = client_id;
+                completedResponse.request_finished = true;
+                completedResponse.command = request.command;
+
                 publishResponse(std::move(completedResponse));
-                return;
-            }else {
 
-                response.message = "Request processing not implemented";
-                response.status = ResponseStatus::InternalError;
-                CompletedResponse completedResponse;
-                completedResponse.client_fd = client_fd;
-                completedResponse.generation = generation;
-                completedResponse.response = response;
-                publishResponse(std::move(completedResponse));
-                return;
+            });
+        } catch(const std::exception &e) {
+            std::cerr << "Failed to enqueue request: " << e.what() << '\n'; 
+            state.pending_requests.push(request);
+            state.request_processing = false;
+        }
 
-            }
-
-        });
     }
 
     void Server::handleWriteEvent(int fd) {

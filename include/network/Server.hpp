@@ -7,6 +7,7 @@
 #include "network/CompletedResponse.hpp"
 #include "network/ThreadSafeQueue.hpp"
 #include "network/Connection.hpp"
+#include "network/ClientRequestState.hpp"
 
 #include <unordered_map>
 #include <cstdint>
@@ -32,6 +33,8 @@ namespace oops {
         int port_;
         uint64_t next_generation_ = 0;
         std::unordered_map<int, Connection> connections_;
+        std::uint64_t next_client_id_ = 0;
+        std::unordered_map<std::uint64_t, std::shared_ptr<ClientRequestState>> client_states_;
 
         UniqueFd server_fd_;
         UniqueFd epoll_fd_;
@@ -47,6 +50,7 @@ namespace oops {
         void handleWriteEvent(int fd);
         void updateClientEvents(int fd, std::uint32_t flags);
         void publishResponse(CompletedResponse completed);   
+        void dispatchNextRequest(std::uint64_t client_id);
 
     };
 

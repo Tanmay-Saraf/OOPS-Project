@@ -57,3 +57,6 @@ core.*
 Thumbs.db
 
 /security.log
+
+#Fish Test files
+*.fish
