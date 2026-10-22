@@ -189,21 +189,17 @@ namespace oops{
                         cmd.pop_back();
                     }
 
+                    if(cmd.size() > MAX_REQUEST_SIZE) {
+                        Request request;
+                        request.command = Command::Invalid;
+                        handleRequest(request, conn.fd.get());
+                        continue;
+                    }
+
                     Request request = parseRequest(cmd);
 
-                    if(request.command == Command::Invalid) {
-
-                        Response response;
-                        response.status = ResponseStatus::InvalidRequest;
-                        response.message = "Invalid Request";
-                        conn.send_buffer.append(serializeResponse(response));
-                        updateClientEvents(conn.fd.get(), EPOLLIN | EPOLLOUT);
-
-                    }
-                    else{
-                        std::cout << "Received valid request: " << cmd << '\n';
-                        handleRequest(request, conn.fd.get());
-                    }
+                    std::cout << "Received valid request: " << cmd << '\n';
+                    handleRequest(request, conn.fd.get());
 
                 }
 
@@ -228,6 +224,7 @@ namespace oops{
 
                 epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn.fd.get(), nullptr);
                 connections_.erase(conn.fd.get());
+                dispatchNextRequest(client_id);
                 return;
             }
 
@@ -237,9 +234,12 @@ namespace oops{
                 }
                 if(errno == EAGAIN || errno == EWOULDBLOCK) break;
 
+                auto client_id = conn.client_id;
+
                 int fd = conn.fd.get();
                 epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, fd, nullptr);
                 connections_.erase(fd);
+                dispatchNextRequest(client_id);
                 return;
             }
         }
@@ -292,10 +292,16 @@ namespace oops{
 
                             auto state_it = client_states_.find(completed.client_id);
 
-                            if(state_it != client_states_.end()) {
-                                state_it->second->request_processing = false;
-                                dispatchNextRequest(completed.client_id);
-                            }
+                                if(state_it != client_states_.end()) {
+                                    state_it->second->request_processing = false;
+                                    if(completed.command == Command::Quit && completed.response.status == ResponseStatus::Success) {
+
+                                        while(!state_it->second->pending_requests.empty()) state_it->second->pending_requests.pop();
+
+                                    } else {
+                                        dispatchNextRequest(completed.client_id);
+                                    }
+                                }
 
                         }
 
@@ -339,7 +345,14 @@ namespace oops{
             auto state_it = client_states_.find(conn.client_id);
             if (state_it == client_states_.end()) return;
 
-            state_it->second->pending_requests.push(request);
+            auto& state = *state_it->second;
+
+            if(state.quit_requested) return;
+
+            state.pending_requests.push(request);
+
+            if(request.command == Command::Quit) state.quit_requested = true;
+            
             dispatchNextRequest(conn.client_id);
 
         }
@@ -384,38 +397,57 @@ namespace oops{
         try {
             thread_pool_->enqueue([this, request, client_id, state_ptr, client_fd, generation] () {
 
-                GuardDecision decision = guard_->check(request);
                 Response response;
 
-                if(!decision.allowed) {
+                try {
 
-                    response.message = decision.reason;
-                    response.status = ResponseStatus::PermissionDenied;
+                    if(request.command == Command::Invalid) {
+                        response.status = ResponseStatus::InvalidRequest;
+                        response.message = "Invalid request";
+                    }else {
 
-                }else {
+                        GuardDecision decision = guard_->check(request);
 
-                    switch(request.command) {
+                        if(!decision.allowed) {
 
-                        case Command::Ping: {
-                            response.status = ResponseStatus::Success;
-                            response.message = "PONG";
-                            break;
-                        }
-                        case Command::Quit: {
-                            response.status = ResponseStatus::Success;
-                            response.message = "BYE";
-                            break;
-                        }
-                        default: {
-                            response.status = ResponseStatus::InternalError;
-                            response.message = "Request processing not implemented";
-                            break;
+                            response.message = decision.reason;
+                            response.status = ResponseStatus::PermissionDenied;
+
+                        }else {
+
+                            switch(request.command) {
+
+                                case Command::Ping: {
+                                    response.status = ResponseStatus::Success;
+                                    response.message = "PONG";
+                                    break;
+                                }
+                                case Command::Quit: {
+                                    response.status = ResponseStatus::Success;
+                                    response.message = "BYE";
+                                    break;
+                                }
+                                default: {
+                                    response.status = ResponseStatus::InternalError;
+                                    response.message = "Request processing not implemented";
+                                    break;
+                                }
+
+                            }
+
                         }
 
                     }
 
+
+                }catch(const std::exception& e) {
+                    response.status = ResponseStatus::InternalError;
+                    response.message = std::string("Some error occured:- ") + e.what();
+                }catch(...) {
+                    response.status = ResponseStatus::InternalError;
+                    response.message = "Unknown error occured while processing";
                 }
-                
+
                 CompletedResponse completedResponse;
                 completedResponse.client_fd = client_fd;
                 completedResponse.generation = generation;
@@ -451,12 +483,15 @@ namespace oops{
 
             if(send_buffer.empty()) {
 
+                int conn_fd = conn.fd.get();
+
                 if(conn.close_after_write) {
-                    epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn.fd.get(), nullptr);
-                    connections_.erase(conn.fd.get());
+                    epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn_fd, nullptr);
+                    connections_.erase(conn_fd);
+                    return;
                 }
 
-                updateClientEvents(conn.fd.get(), EPOLLIN);
+                updateClientEvents(conn_fd, EPOLLIN);
                 break;
             }
             sent_bytes = send(conn.fd.get(), send_buffer.data(), send_buffer.size(), MSG_NOSIGNAL);
