@@ -18,7 +18,7 @@ namespace storage{
         }
 
         constexpr std::size_t maximum_payload_size = 16*1024*1024;
-        constexpr std::size_t fixed_payload_size = 37;
+        constexpr std::size_t fixed_payload_size = 29;
         
         std::size_t offset = 0;
 

@@ -9,12 +9,12 @@
 #include <vector>
 
 int main(){
-    std::string test_wal_path = "wal_reader_truncated_prefix_test.log";
+    std::string test_wal_path = "wal_reader_truncated_payload_test.log";
     std::filesystem::remove(test_wal_path);
 
     std::ofstream outfile(test_wal_path, std::ios::binary);
 
-    std::vector<std::uint8_t>buffer = {0,0,0,37,1,1,1,1,1,1};
+    std::vector<std::uint8_t>buffer = {0,0,0,29,1,1,1,1,1,1};
     outfile.write(reinterpret_cast<const char*>(buffer.data()),static_cast<std::streamsize>(buffer.size())); // prefix says 37 but only added 6
     
     outfile.close();

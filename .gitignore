@@ -1,0 +1,9 @@
+*.o
+/.vscode/
+/serializer
+/wal_reader
+/wal_reader_corrupted_checksum_test
+/wal_reader_empty_test
+/wal_reader_test
+/wal_reader_truncated_payload_test
+/wal_reader_truncated_prefix_test

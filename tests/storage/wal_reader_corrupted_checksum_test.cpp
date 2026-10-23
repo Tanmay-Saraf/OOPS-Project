@@ -17,8 +17,7 @@ int main(){
     storage::WalRecord record1{
         storage::RecordType::PUT, // Type
         1,                        // sequence_number
-        100,                      // transaction_id
-        1729000000000,            // timestamp
+        1729000000000000ULL,            // timestamp
         "cat",                    // key
         "dog"                     // value
     };

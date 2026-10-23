@@ -63,14 +63,12 @@ namespace storage{
     std::vector<std::uint8_t> serialize(const WalRecord& record){
         // Constant data use constexpr , so it will be compile time constant 
         constexpr std::size_t maximum_payload_size = 16*1024*1024;
-        constexpr std::size_t fixed_payload_size = 37;
+        constexpr std::size_t fixed_payload_size = 29;
         
         // Validating the type
         switch(record.type){
             case RecordType::PUT:
             case RecordType::DELETE:
-            case RecordType::BEGIN:
-            case RecordType::COMMIT:
             break;
             default:
             throw std::invalid_argument("No such type is found");
@@ -106,9 +104,6 @@ namespace storage{
         
         // Adding sequence number which is 64 bits big
         convert64(bytes , record.sequence_number);
-    
-        // Adding transaction id which is 64 bits big
-        convert64(bytes , record.transaction_id);
 
         // Adding timestamp which is 64 bits big
         convert64(bytes , record.timestamp);
@@ -151,7 +146,7 @@ namespace storage{
 
         // Constant values
         constexpr std::size_t maximum_payload_size = 16*1024*1024;
-        constexpr std::size_t fixed_payload_size = 37;
+        constexpr std::size_t fixed_payload_size = 29;
 
         // Validation of payload size if it contains all the fields 
         if(payload_size < fixed_payload_size || payload_size > maximum_payload_size){
@@ -170,8 +165,6 @@ namespace storage{
         {
         case static_cast<std::uint8_t>(RecordType::PUT):
         case static_cast<std::uint8_t>(RecordType::DELETE):
-        case static_cast<std::uint8_t>(RecordType::BEGIN):
-        case static_cast<std::uint8_t>(RecordType::COMMIT):
             break;
         default:
             return std::nullopt;
@@ -180,11 +173,8 @@ namespace storage{
         // Sequence number 
         std::uint64_t sequence_number = read64(bytes , 5);
 
-        // Transaction id 
-        std::uint64_t transaction_id = read64(bytes , 13);
-
         // Timestamp
-        std::uint64_t timestamp = read64(bytes , 21);
+        std::uint64_t timestamp = read64(bytes , 13);
         
         // Checksum and its validation
         std::uint32_t stored_checksum = read32(bytes , total_bytes - 4);
@@ -196,33 +186,32 @@ namespace storage{
         }
         
         // Key length 
-        std::uint32_t key_size = read32(bytes , 29);
+        std::uint32_t key_size = read32(bytes , 21);
 
-        // Removing 4 for prefix length , then 37 for all other fields includeing value size and checksum
-        // type - 1 , sequence_number - 8 , transaction_id - 8 , timestamp - 8 , key_length - 4 , value_length - 4 , checksum - 4 = 37 
-        if(key_size > total_bytes - 4 - 37 ){
+        // The fixed payload includes the type, sequence number, timestamp,
+        // key length, value length, and checksum: 1 + 8 + 8 + 4 + 4 + 4 = 29 bytes.
+        if(key_size > total_bytes - 4 - fixed_payload_size ){
             return std::nullopt;
         }
 
         // Actual key
-        std::string key = std::string(bytes.begin()+33 , bytes.begin()+33+key_size);
+        std::string key = std::string(bytes.begin()+25 , bytes.begin()+25+key_size);
 
         // Value length
-        std::uint32_t value_size = read32(bytes , 33+key_size);
+        std::uint32_t value_size = read32(bytes , 25+key_size);
 
         // Value length validation
-        if(value_size != total_bytes - 4 - 37 - key_size){
+        if(value_size != total_bytes - 4 - fixed_payload_size - key_size){
             return std::nullopt;
         }
 
         // Actual value
-        std::string value = std::string(bytes.begin()+37+key_size , bytes.begin()+37+key_size+value_size);
+        std::string value = std::string(bytes.begin()+fixed_payload_size+key_size , bytes.begin()+fixed_payload_size+key_size+value_size);
 
 
         return WalRecord {
             static_cast<RecordType>(type),
             sequence_number,
-            transaction_id,
             timestamp,
             key,
             value

@@ -15,7 +15,6 @@ All integer fields are encoded in **big-endian byte order**.
 | Payload length | 4 | Number of bytes following this field, including the checksum |
 | Record type | 1 | Operation or transaction record type |
 | Sequence number | 8 | Sequence number associated with the record |
-| Transaction ID | 8 | Identifier of the associated transaction |
 | Timestamp | 8 | Timestamp associated with the record |
 | Key length | 4 | Length of the key in bytes |
 | Key | Variable | Key bytes |
@@ -23,9 +22,9 @@ All integer fields are encoded in **big-endian byte order**.
 | Value | Variable | Value bytes |
 | CRC-32 checksum | 4 | Checksum of the prefix and record contents preceding this field |
 
-The fixed payload overhead is 37 bytes, excluding the 4-byte payload-length prefix. Therefore:
+The fixed payload overhead is 29 bytes, excluding the 4-byte payload-length prefix. Therefore:
 
-`Payload length = 37 + key length + value length`
+`Payload length = 29 + key length + value length`
 
 `Total record size = 4 + payload length`
 
@@ -39,8 +38,6 @@ The record type is encoded as one byte using the numeric value of `storage::Reco
 |---|---|
 | `PUT` | Insert or update a key-value pair |
 | `DELETE` | Delete a key |
-| `BEGIN` | Begin a transaction |
-| `COMMIT` | Commit a transaction |
 
 The current enum values are assigned in declaration order, starting at zero.
 

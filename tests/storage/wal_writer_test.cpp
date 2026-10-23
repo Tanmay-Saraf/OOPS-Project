@@ -13,17 +13,15 @@ int main(){
     storage::WalRecord record1{
         storage::RecordType::PUT, // Type
         1,                        // sequence_number
-        100,                      // transaction_id
-        1729000000000,            // timestamp
+        1729000000000000ULL,            // timestamp
         "cat",                    // key
         "dog"                     // value
     };
 
     storage::WalRecord record2{
         storage::RecordType::PUT, // Type
-        1,                        // sequence_number
-        100,                      // transaction_id
-        1729000000000,            // timestamp
+        2,                        // sequence_number
+        1729000000000000ULL,            // timestamp
         "hello",                  // key
         "world"                   // value
     };
@@ -112,14 +110,12 @@ int main(){
 
     assert(records[0].type == record1.type);
     assert(records[0].sequence_number == record1.sequence_number);
-    assert(records[0].transaction_id == record1.transaction_id);
     assert(records[0].timestamp == record1.timestamp);
     assert(records[0].key == record1.key);
     assert(records[0].value == record1.value);
 
     assert(records[1].type == record2.type);
     assert(records[1].sequence_number == record2.sequence_number);
-    assert(records[1].transaction_id == record2.transaction_id);
     assert(records[1].timestamp == record2.timestamp);
     assert(records[1].key == record2.key);
     assert(records[1].value == record2.value);

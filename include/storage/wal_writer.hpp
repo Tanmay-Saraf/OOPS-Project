@@ -5,18 +5,18 @@
 
 #include <iostream>
 #include <string>
-#include <fstream>
 #include <mutex>
 #include <stdexcept>
 
 namespace storage {
     class WalWriter{
       private:
-        std::ofstream outFile;
+        int fd = -1;
         std::mutex mtx;
         bool failed = false;
       public:
-        WalWriter(const std::string& filepath);
+        explicit WalWriter(const std::string& filepath);
+        ~WalWriter();
         void append(const WalRecord& record);
     };
 }
