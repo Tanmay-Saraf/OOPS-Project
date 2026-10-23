@@ -17,7 +17,7 @@ std::optional<Version> MemoryStore::getLatest(const std::string& key) const{
 
 uint64_t MemoryStore::allocateVersionID(){
     if(versionIDsExhausted)throw std::overflow_error("MemoryStore version IDs exhausted");
-    uint16_t id=nextVersionID;
+    uint64_t id=nextVersionID;
     if(nextVersionID==std::numeric_limits<uint64_t>::max()){
         versionIDsExhausted=true;
     }else{
