@@ -8,6 +8,7 @@
 #include "network/ThreadSafeQueue.hpp"
 #include "network/Connection.hpp"
 #include "network/ClientRequestState.hpp"
+#include "network/MemoryEngineAdapter.hpp"
 
 #include <unordered_map>
 #include <cstdint>
@@ -22,7 +23,11 @@ namespace oops {
     class Server {
     public:
     
-        explicit Server(int port, std::unique_ptr<RequestGuard> guard = std::make_unique<AllowAllGuard>());
+        explicit Server(int port, 
+            std::unique_ptr<RequestGuard> guard = std::make_unique<AllowAllGuard>(), 
+            std::unique_ptr<MemoryEngineAdapter> memory = nullptr
+        );
+
         Server(const Server&) = delete;
         Server& operator=(const Server&) = delete;
         ~Server();
@@ -42,6 +47,7 @@ namespace oops {
         std::unique_ptr<RequestGuard> guard_;
         ThreadSafeQueue<CompletedResponse> completed_responses_;
         std::unique_ptr<ThreadPool> thread_pool_;
+        std::unique_ptr<MemoryEngineAdapter> memory_;
 
         void setup();
         void acceptClients();

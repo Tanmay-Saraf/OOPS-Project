@@ -22,6 +22,7 @@ add_library(request_parser
     src/network/UniqueFd.cpp
     src/network/ResponseSerializer.cpp
     src/network/ThreadPool.cpp
+    src/network/TemporaryMemoryEngine.cpp
 )
 
 target_include_directories(request_parser

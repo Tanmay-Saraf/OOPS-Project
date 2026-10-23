@@ -6,6 +6,7 @@
 #include "network/CompletedResponse.hpp"
 #include "network/ThreadSafeQueue.hpp"
 #include "network/ThreadPool.hpp"
+#include "network/TemporaryMemoryEngine.hpp"
 
 //C++ Header Includes
 #include <stdexcept>
@@ -25,11 +26,16 @@
 
 namespace oops{
 
-    Server::Server(int port, std::unique_ptr<RequestGuard> guard) : port_(port), guard_(std::move(guard)) {
+    Server::Server(int port, std::unique_ptr<RequestGuard> guard, std::unique_ptr<MemoryEngineAdapter> memory) : port_(port), guard_(std::move(guard)), memory_(std::move(memory)) {
         if (port_ < 1 || port_ > 65535) {
             throw std::invalid_argument("Invalid port number");
         }
         thread_pool_ = std::make_unique<ThreadPool>(4);
+
+        if(!memory_) {
+            memory_ = std::make_unique<TemporaryMemoryEngine>();
+        }
+
         setup();
     }
 
