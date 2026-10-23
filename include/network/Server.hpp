@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <cstdint>
 #include <memory>
+#include <atomic>
 
 #include <sys/epoll.h>
 
@@ -33,6 +34,7 @@ namespace oops {
         ~Server();
 
         void run();
+        void requestShutdown();
 
     private:
         int port_;
@@ -40,6 +42,9 @@ namespace oops {
         std::unordered_map<int, Connection> connections_;
         std::uint64_t next_client_id_ = 0;
         std::unordered_map<std::uint64_t, std::shared_ptr<ClientRequestState>> client_states_;
+
+        std::atomic<std::uint64_t> outstanding_requests_{0};
+        std::atomic<bool> stopping_{false};
 
         UniqueFd server_fd_;
         UniqueFd epoll_fd_;
@@ -57,6 +62,7 @@ namespace oops {
         void updateClientEvents(int fd, std::uint32_t flags);
         void publishResponse(CompletedResponse completed);   
         void dispatchNextRequest(std::uint64_t client_id);
+        bool checkAllClientBuffersEmpty() const;
 
     };
 

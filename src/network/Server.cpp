@@ -255,7 +255,7 @@ namespace oops{
         constexpr int MAX_EVENTS = 64;
         epoll_event events[MAX_EVENTS];
 
-        while(true){
+        while(!stopping_.load() || outstanding_requests_.load() > 0 || !checkAllClientBuffersEmpty()){
 
             int active = epoll_wait(epoll_fd_.get(), events, MAX_EVENTS, -1);
 
@@ -276,7 +276,7 @@ namespace oops{
 
 
                 if(event_fd == server_fd_.get()){
-                    acceptClients();
+                    if(!stopping_.load()) acceptClients();
                 } else if(event_fd == response_event_fd_.get()) {
 
                     std::uint64_t notifications = 0;
@@ -306,6 +306,7 @@ namespace oops{
                                         dispatchNextRequest(completed.client_id);
                                     }
                                 }
+                            outstanding_requests_.fetch_sub(1);
 
                         }
 
@@ -354,6 +355,7 @@ namespace oops{
             if(state.quit_requested) return;
 
             state.pending_requests.push(request);
+            outstanding_requests_.fetch_add(1);
 
             if(request.command == Command::Quit) state.quit_requested = true;
             
@@ -429,6 +431,14 @@ namespace oops{
                                 case Command::Quit: {
                                     response.status = ResponseStatus::Success;
                                     response.message = "BYE";
+                                    break;
+                                }
+                                case Command::Set:
+                                case Command::Get:
+                                case Command::Delete:
+                                case Command::Exists:
+                                case Command::Keys:{
+                                    response = memory_->execute(request);
                                     break;
                                 }
                                 default: {
@@ -565,6 +575,42 @@ namespace oops{
             throw std::runtime_error("Error while updating notification");
 
         }
+
+    }
+
+    void Server::requestShutdown() {
+
+        stopping_.store(true);
+
+        std::uint64_t notification = 1;
+
+        ssize_t written_bytes;
+
+        while(true) {
+
+            written_bytes = write(response_event_fd_.get(), &notification, sizeof(notification));
+
+            if(written_bytes == sizeof(notification)) return;
+
+            if(written_bytes == -1) {
+
+                if(errno == EINTR) continue;
+                if(errno == EAGAIN || errno == EWOULDBLOCK) return;
+                throw std::runtime_error("Failed to notify event loop during shutdown");
+
+            }
+
+        }
+
+    }
+
+    bool Server::checkAllClientBuffersEmpty() const{
+
+        for(auto it = connections_.begin(); it != connections_.end(); it++) {
+            if(!it->second.send_buffer.empty()) return false;
+        }
+
+        return true;
 
     }
 
