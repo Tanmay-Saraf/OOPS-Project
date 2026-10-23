@@ -207,12 +207,10 @@ namespace oops{
                     conn.discarding_oversized_request = true;
                     curr_receive_buffer.clear();
 
-                    Response response;
-                    response.status = ResponseStatus::InvalidRequest;
-                    response.message = "Invalid Request";
+                    Request request;
+                    request.command = Command::Invalid;
+                    handleRequest(request, conn.fd.get());
 
-                    conn.send_buffer.append(serializeResponse(response));
-                    updateClientEvents(conn.fd.get(), EPOLLIN | EPOLLOUT);
                 }
 
                 continue;
