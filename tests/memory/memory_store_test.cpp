@@ -40,9 +40,11 @@ int main(){
 
     assert(firstVersion.has_value());
     assert(firstVersion->value=="Garvit");
+    assert(firstVersion->operation==Operation::Put);
 
     assert(secondVersion.has_value());
     assert(secondVersion->value=="Alex");
+    assert(secondVersion->operation==Operation::Put);
 
     auto missingVersion=store.getVersion("name", 999999);
     assert(!missingVersion.has_value());
@@ -71,9 +73,12 @@ int main(){
     assert(history.size()==3);
     assert(history.back().operation==Operation::Delete);
 
-    // Test 6: Deleted version is not returned as a value
+    // Test 6: getVersion returns the deletion tombstone
     auto deletedNameVersion=store.getVersion("name", history.back().id);
-    assert(!deletedNameVersion.has_value());
+
+    assert(deletedNameVersion.has_value());
+    assert(deletedNameVersion->operation==Operation::Delete);
+    assert(deletedNameVersion->id==history.back().id);
 
     // Test 7: Delete an already deleted key
     bool removedAgain=store.remove("name");
@@ -143,13 +148,18 @@ int main(){
 
     assert(!deletedCityVersion.has_value());
 
-    // Test 12: History of another key
+    // Test 12: History preserves updates and deletion
     auto cityHistory=store.getHistory("city");
 
     assert(cityHistory.size()==3);
     assert(cityHistory[0].value=="Delhi");
     assert(cityHistory[1].value=="Mumbai");
     assert(cityHistory[2].operation==Operation::Delete);
+
+    auto cityDeleteVersion=store.getVersion("city", cityHistory[2].id);
+
+    assert(cityDeleteVersion.has_value());
+    assert(cityDeleteVersion->operation==Operation::Delete);
 
     assert(store.getHistory("missing").empty());
 
@@ -166,9 +176,13 @@ int main(){
     Version greenVersion(11, "green", Operation::Put, recoveryTime2);
     Version deleteVersion(12, "", Operation::Delete, recoveryTime3);
 
-    assert(recoveredStore.replayVersion("colour", blueVersion));
-    assert(recoveredStore.replayVersion("colour", greenVersion));
-    assert(recoveredStore.replayVersion("colour", deleteVersion));
+    bool replayBlue=recoveredStore.replayVersion("colour", blueVersion);
+    bool replayGreen=recoveredStore.replayVersion("colour", greenVersion);
+    bool replayDelete=recoveredStore.replayVersion("colour", deleteVersion);
+
+    assert(replayBlue);
+    assert(replayGreen);
+    assert(replayDelete);
 
     // Test 14: Replay preserves IDs, values, operations and timestamps
     auto recoveredHistory=recoveredStore.getHistory("colour");
@@ -194,12 +208,26 @@ int main(){
     assert(!recoveredStore.exists("colour"));
     assert(recoveredStore.keys().empty());
 
-    // Test 16: Reject duplicate global version IDs
+    // Test 16: Historical versions remain accessible after replay
+    auto recoveredBlue=recoveredStore.getVersion("colour", 10);
+    auto recoveredGreen=recoveredStore.getVersion("colour", 11);
+    auto recoveredDelete=recoveredStore.getVersion("colour", 12);
+
+    assert(recoveredBlue.has_value());
+    assert(recoveredBlue->value=="blue");
+
+    assert(recoveredGreen.has_value());
+    assert(recoveredGreen->value=="green");
+
+    assert(recoveredDelete.has_value());
+    assert(recoveredDelete->operation==Operation::Delete);
+
+    // Test 17: Reject duplicate global version IDs
     bool duplicateRejected=!recoveredStore.replayVersion("other", blueVersion);
     assert(duplicateRejected);
     assert(recoveredStore.getHistory("other").empty());
 
-    // Test 17: Reject invalid and out-of-order versions
+    // Test 18: Reject invalid and out-of-order versions
     Version zeroVersion(0, "invalid", Operation::Put, recoveryTime1);
     bool zeroRejected=!recoveredStore.replayVersion("other", zeroVersion);
     assert(zeroRejected);
@@ -210,7 +238,7 @@ int main(){
 
     assert(recoveredStore.getHistory("colour").size()==3);
 
-    // Test 18: Next normal write uses the next available ID
+    // Test 19: Next normal write uses the next available ID
     recoveredStore.put("other", "new value");
 
     auto nextVersion=recoveredStore.getLatest("other");
@@ -221,11 +249,11 @@ int main(){
 
     std::cout<<"Recovery tests passed!\n";
 
-    // Test 19: Version counter must not overflow
+    // Test 20: Version counter must not overflow
     MemoryStore exhaustedStore;
 
     Version maxVersion(
-        std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<std::uint64_t>::max(),
         "last",
         Operation::Put,
         recoveryTime1

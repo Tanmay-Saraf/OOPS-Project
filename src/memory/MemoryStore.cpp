@@ -91,7 +91,6 @@ std::optional<Version> MemoryStore:: getVersion(const std::string& key, uint64_t
     const auto& versions= it->second.getAllVersions();
     for(const auto& version: versions){
         if(version.id==VersionID){
-            if(version.operation==Operation::Delete)return std::nullopt;
             return version;
         }
     }
