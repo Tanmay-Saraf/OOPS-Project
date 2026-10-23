@@ -2,6 +2,8 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <limits>
+#include <stdexcept>
 #include "memory/MemoryStore.hpp"
 
 int main(){
@@ -10,64 +12,107 @@ int main(){
     // Test 1: Insert and retrieve a value
     store.put("name", "Garvit");
 
-    assert(store.get("name")!=nullptr);
-    assert(store.get("name")->value=="Garvit");
+    auto result=store.get("name");
+    assert(result.has_value());
+    assert(result->value=="Garvit");
+    assert(store.exists("name"));
+    assert(!store.exists("missing"));
 
     // Test 2: Update a key and preserve history
+    store.put("zebra", "animal");
+    store.put("apple", "fruit");
     store.put("name", "Alex");
-    assert(store.exists("name"));
-assert(!store.exists("missing"));
-    assert(store.get("name")->value=="Alex");
+
+    result=store.get("name");
+    assert(result.has_value());
+    assert(result->value=="Alex");
 
     auto history=store.getHistory("name");
 
     assert(history.size()==2);
     assert(history[0].value=="Garvit");
     assert(history[1].value=="Alex");
+    assert(history[0].id<history[1].id);
 
-    store.put("zebra", "animal");
-store.put("apple", "fruit");
+    // Test 3: Retrieve a specific version
+    auto firstVersion=store.getVersion("name", history[0].id);
+    auto secondVersion=store.getVersion("name", history[1].id);
 
-auto currentKeys=store.keys();
+    assert(firstVersion.has_value());
+    assert(firstVersion->value=="Garvit");
 
-assert(currentKeys.size()==3);
-assert(currentKeys[0]=="apple");
-assert(currentKeys[1]=="name");
-assert(currentKeys[2]=="zebra");
-    // Test 3: Retrieve a missing key
-    assert(store.get("missing")==nullptr);
+    assert(secondVersion.has_value());
+    assert(secondVersion->value=="Alex");
 
-    // Test 4: Delete an existing key
+    auto missingVersion=store.getVersion("name", 999999);
+    assert(!missingVersion.has_value());
+
+    auto wrongKeyVersion=store.getVersion("apple", history[0].id);
+    assert(!wrongKeyVersion.has_value());
+
+    // Test 4: List currently existing keys
+    auto currentKeys=store.keys();
+
+    assert(currentKeys.size()==3);
+    assert(currentKeys[0]=="apple");
+    assert(currentKeys[1]=="name");
+    assert(currentKeys[2]=="zebra");
+
+    // Test 5: Delete an existing key
     bool removedName=store.remove("name");
     assert(removedName);
 
-    assert(store.get("name")==nullptr);
+    result=store.get("name");
+    assert(!result.has_value());
+    assert(!store.exists("name"));
 
     history=store.getHistory("name");
 
     assert(history.size()==3);
     assert(history.back().operation==Operation::Delete);
 
-    // Test 5: Delete an already deleted key
+    // Test 6: Deleted version is not returned as a value
+    auto deletedNameVersion=store.getVersion("name", history.back().id);
+    assert(!deletedNameVersion.has_value());
+
+    // Test 7: Delete an already deleted key
     bool removedAgain=store.remove("name");
     assert(!removedAgain);
 
     history=store.getHistory("name");
     assert(history.size()==3);
 
-    currentKeys=store.keys();
-
-assert(currentKeys.size()==2);
-assert(currentKeys[0]=="apple");
-assert(currentKeys[1]=="zebra");
-    // Test 6: Delete a key that never existed
+    // Test 8: Delete a key that never existed
     bool removedMissing=store.remove("missing");
     assert(!removedMissing);
-    assert(!store.exists("name"));
-    // Test 7: Historical lookups
+
+    // Test 9: KEYS excludes deleted keys
+    currentKeys=store.keys();
+
+    assert(currentKeys.size()==2);
+    assert(currentKeys[0]=="apple");
+    assert(currentKeys[1]=="zebra");
+
+    // Test 10: Re-create a deleted key
+    store.put("name", "Riya");
+
+    result=store.get("name");
+    assert(result.has_value());
+    assert(result->value=="Riya");
+    assert(store.exists("name"));
+
+    history=store.getHistory("name");
+
+    assert(history.size()==4);
+    assert(history[2].operation==Operation::Delete);
+    assert(history[3].operation==Operation::Put);
+    assert(history[3].value=="Riya");
+    assert(history[3].id>history[2].id);
+
+    // Test 11: Historical lookups
     store.put("city", "Delhi");
 
-    auto time1=std::chrono::system_clock::now();
+    auto cityTime1=std::chrono::system_clock::now();
 
     std::this_thread::sleep_for(
         std::chrono::milliseconds(5)
@@ -75,7 +120,7 @@ assert(currentKeys[1]=="zebra");
 
     store.put("city", "Mumbai");
 
-    auto time2=std::chrono::system_clock::now();
+    auto cityTime2=std::chrono::system_clock::now();
 
     std::this_thread::sleep_for(
         std::chrono::milliseconds(5)
@@ -84,22 +129,124 @@ assert(currentKeys[1]=="zebra");
     bool removedCity=store.remove("city");
     assert(removedCity);
 
-    auto time3=std::chrono::system_clock::now();
+    auto cityTime3=std::chrono::system_clock::now();
 
-    auto oldVersion=store.getAtTime("city", time1);
-    auto newVersion=store.getAtTime("city", time2);
-    auto deletedVersion=store.getAtTime("city", time3);
+    auto oldCityVersion=store.getAtTime("city", cityTime1);
+    auto newCityVersion=store.getAtTime("city", cityTime2);
+    auto deletedCityVersion=store.getAtTime("city", cityTime3);
 
-    assert(oldVersion!=nullptr);
-    assert(oldVersion->value=="Delhi");
+    assert(oldCityVersion.has_value());
+    assert(oldCityVersion->value=="Delhi");
 
-    assert(newVersion!=nullptr);
-    assert(newVersion->value=="Mumbai");
+    assert(newCityVersion.has_value());
+    assert(newCityVersion->value=="Mumbai");
 
-    assert(deletedVersion==nullptr);
+    assert(!deletedCityVersion.has_value());
 
-    std::cout<<"Time-travel tests passed!\n";
-    std::cout<<"Basic MemoryStore tests passed!\n";
+    // Test 12: History of another key
+    auto cityHistory=store.getHistory("city");
+
+    assert(cityHistory.size()==3);
+    assert(cityHistory[0].value=="Delhi");
+    assert(cityHistory[1].value=="Mumbai");
+    assert(cityHistory[2].operation==Operation::Delete);
+
+    assert(store.getHistory("missing").empty());
+
+    std::cout<<"Basic and time-travel tests passed!\n";
+
+    // Test 13: Replay versions from WAL records
+    MemoryStore recoveredStore;
+
+    auto recoveryTime1=std::chrono::system_clock::now();
+    auto recoveryTime2=recoveryTime1+std::chrono::microseconds(10);
+    auto recoveryTime3=recoveryTime2+std::chrono::microseconds(10);
+
+    Version blueVersion(10, "blue", Operation::Put, recoveryTime1);
+    Version greenVersion(11, "green", Operation::Put, recoveryTime2);
+    Version deleteVersion(12, "", Operation::Delete, recoveryTime3);
+
+    assert(recoveredStore.replayVersion("colour", blueVersion));
+    assert(recoveredStore.replayVersion("colour", greenVersion));
+    assert(recoveredStore.replayVersion("colour", deleteVersion));
+
+    // Test 14: Replay preserves IDs, values, operations and timestamps
+    auto recoveredHistory=recoveredStore.getHistory("colour");
+
+    assert(recoveredHistory.size()==3);
+
+    assert(recoveredHistory[0].id==10);
+    assert(recoveredHistory[0].value=="blue");
+    assert(recoveredHistory[0].operation==Operation::Put);
+    assert(recoveredHistory[0].timestamp==recoveryTime1);
+
+    assert(recoveredHistory[1].id==11);
+    assert(recoveredHistory[1].value=="green");
+    assert(recoveredHistory[1].operation==Operation::Put);
+    assert(recoveredHistory[1].timestamp==recoveryTime2);
+
+    assert(recoveredHistory[2].id==12);
+    assert(recoveredHistory[2].operation==Operation::Delete);
+    assert(recoveredHistory[2].timestamp==recoveryTime3);
+
+    // Test 15: Replayed deletion remains effective
+    assert(!recoveredStore.get("colour").has_value());
+    assert(!recoveredStore.exists("colour"));
+    assert(recoveredStore.keys().empty());
+
+    // Test 16: Reject duplicate global version IDs
+    bool duplicateRejected=!recoveredStore.replayVersion("other", blueVersion);
+    assert(duplicateRejected);
+    assert(recoveredStore.getHistory("other").empty());
+
+    // Test 17: Reject invalid and out-of-order versions
+    Version zeroVersion(0, "invalid", Operation::Put, recoveryTime1);
+    bool zeroRejected=!recoveredStore.replayVersion("other", zeroVersion);
+    assert(zeroRejected);
+
+    Version oldVersion(9, "out of order", Operation::Put, recoveryTime1);
+    bool outOfOrderRejected=!recoveredStore.replayVersion("colour", oldVersion);
+    assert(outOfOrderRejected);
+
+    assert(recoveredStore.getHistory("colour").size()==3);
+
+    // Test 18: Next normal write uses the next available ID
+    recoveredStore.put("other", "new value");
+
+    auto nextVersion=recoveredStore.getLatest("other");
+
+    assert(nextVersion.has_value());
+    assert(nextVersion->id==13);
+    assert(nextVersion->value=="new value");
+
+    std::cout<<"Recovery tests passed!\n";
+
+    // Test 19: Version counter must not overflow
+    MemoryStore exhaustedStore;
+
+    Version maxVersion(
+        std::numeric_limits<uint64_t>::max(),
+        "last",
+        Operation::Put,
+        recoveryTime1
+    );
+
+    bool maxVersionAccepted=exhaustedStore.replayVersion("last", maxVersion);
+    assert(maxVersionAccepted);
+
+    bool overflowRejected=false;
+
+    try{
+        exhaustedStore.put("next", "value");
+    }
+    catch(const std::overflow_error&){
+        overflowRejected=true;
+    }
+
+    assert(overflowRejected);
+    assert(!exhaustedStore.exists("next"));
+
+    std::cout<<"Version overflow tests passed!\n";
 
     return 0;
 }
