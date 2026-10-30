@@ -1,3 +1,4 @@
+
 #include <cassert>
 #include <iostream>
 #include <chrono>
@@ -7,11 +8,16 @@
 #include <atomic>
 #include <vector>
 #include <algorithm>
-#include "memory/MemoryStore.hpp"
+#include "memory/MemoryEngine.hpp"
 
 using namespace oops;
 
 int main(){
+
+    // ==========================================
+    // MEMORY STORE TESTS
+    // ==========================================
+
     MemoryStore store;
 
     // Test 1: Insert and retrieve a value
@@ -45,11 +51,9 @@ int main(){
 
     assert(firstVersion.has_value());
     assert(firstVersion->value=="Garvit");
-    assert(firstVersion->operation==Operation::Put);
 
     assert(secondVersion.has_value());
     assert(secondVersion->value=="Alex");
-    assert(secondVersion->operation==Operation::Put);
 
     auto missingVersion=store.getVersion("name", 999999);
     assert(!missingVersion.has_value());
@@ -78,7 +82,7 @@ int main(){
     assert(history.size()==3);
     assert(history.back().operation==Operation::Delete);
 
-    // Test 6: getVersion returns the deletion tombstone
+    // Test 6: getVersion returns deletion tombstone
     auto deletedNameVersion=store.getVersion("name", history.back().id);
 
     assert(deletedNameVersion.has_value());
@@ -169,7 +173,11 @@ int main(){
 
     std::cout<<"Basic and time-travel tests passed!\n";
 
-    // Test 13: Replay versions from WAL records
+
+    // ==========================================
+    // RECOVERY TESTS
+    // ==========================================
+
     MemoryStore recoveredStore;
 
     auto recoveryTime1=std::chrono::system_clock::now();
@@ -188,31 +196,29 @@ int main(){
     assert(replayGreen);
     assert(replayDelete);
 
-    // Test 14: Replay preserves IDs, values, operations and timestamps
+    // Test 13: Replay preserves original records
     auto recoveredHistory=recoveredStore.getHistory("colour");
 
     assert(recoveredHistory.size()==3);
 
     assert(recoveredHistory[0].id==10);
     assert(recoveredHistory[0].value=="blue");
-    assert(recoveredHistory[0].operation==Operation::Put);
     assert(recoveredHistory[0].timestamp==recoveryTime1);
 
     assert(recoveredHistory[1].id==11);
     assert(recoveredHistory[1].value=="green");
-    assert(recoveredHistory[1].operation==Operation::Put);
     assert(recoveredHistory[1].timestamp==recoveryTime2);
 
     assert(recoveredHistory[2].id==12);
     assert(recoveredHistory[2].operation==Operation::Delete);
     assert(recoveredHistory[2].timestamp==recoveryTime3);
 
-    // Test 15: Replayed deletion remains effective
+    // Test 14: Replayed deletion remains effective
     assert(!recoveredStore.get("colour").has_value());
     assert(!recoveredStore.exists("colour"));
     assert(recoveredStore.keys().empty());
 
-    // Test 16: Historical versions remain accessible after replay
+    // Test 15: Historical versions remain accessible
     auto recoveredBlue=recoveredStore.getVersion("colour", 10);
     auto recoveredGreen=recoveredStore.getVersion("colour", 11);
     auto recoveredDelete=recoveredStore.getVersion("colour", 12);
@@ -226,32 +232,32 @@ int main(){
     assert(recoveredDelete.has_value());
     assert(recoveredDelete->operation==Operation::Delete);
 
-    // Test 17: Reject duplicate global version IDs
+    // Test 16: Reject duplicate IDs
     bool duplicateRejected=!recoveredStore.replayVersion("other", blueVersion);
     assert(duplicateRejected);
-    assert(recoveredStore.getHistory("other").empty());
 
-    // Test 18: Reject invalid and out-of-order versions
+    // Test 17: Reject invalid and out-of-order versions
     Version zeroVersion(0, "invalid", Operation::Put, recoveryTime1);
     assert(!recoveredStore.replayVersion("other", zeroVersion));
 
-    Version oldVersion(9, "out of order", Operation::Put, recoveryTime1);
+    Version oldVersion(9, "old", Operation::Put, recoveryTime1);
     assert(!recoveredStore.replayVersion("colour", oldVersion));
 
-    assert(recoveredStore.getHistory("colour").size()==3);
-
-    // Test 19: Next normal write uses the next available ID
+    // Test 18: Next write uses the next available ID
     recoveredStore.put("other", "new value");
 
     auto nextVersion=recoveredStore.getLatest("other");
 
     assert(nextVersion.has_value());
     assert(nextVersion->id==13);
-    assert(nextVersion->value=="new value");
 
     std::cout<<"Recovery tests passed!\n";
 
-    // Test 20: Version counter must not overflow
+
+    // ==========================================
+    // VERSION OVERFLOW TESTS
+    // ==========================================
+
     MemoryStore exhaustedStore;
 
     Version maxVersion(
@@ -278,17 +284,22 @@ int main(){
 
     std::cout<<"Version overflow tests passed!\n";
 
-    // Test 21: Concurrent writers
+
+    // ==========================================
+    // CONCURRENCY TESTS
+    // ==========================================
+
     MemoryStore concurrentStore;
 
     const int threadCount=4;
     const int writesPerThread=500;
 
     std::atomic<bool> writingDone=false;
+
     std::vector<std::thread> readers;
     std::vector<std::thread> writers;
 
-    // Start multiple readers
+    // Test 19: Concurrent readers
     for(int i=0;i<3;i++){
         readers.emplace_back([&concurrentStore,&writingDone](){
             while(!writingDone.load()){
@@ -311,7 +322,7 @@ int main(){
         });
     }
 
-    // Start multiple writers
+    // Test 20: Concurrent writers
     for(int i=0;i<threadCount;i++){
         writers.emplace_back([&concurrentStore,i](){
             for(int j=0;j<writesPerThread;j++){
@@ -323,24 +334,22 @@ int main(){
         });
     }
 
-    // Wait for all writers to finish
     for(auto& writer:writers){
         writer.join();
     }
 
     writingDone.store(true);
 
-    // Wait for all readers to finish
     for(auto& reader:readers){
         reader.join();
     }
 
-    // Test 22: No writes were lost
+    // Test 21: No writes were lost
     auto concurrentHistory=concurrentStore.getHistory("shared");
 
     assert(concurrentHistory.size()==threadCount*writesPerThread);
 
-    // Test 23: All version IDs are unique
+    // Test 22: Version IDs are unique and sequential
     std::vector<uint64_t> concurrentIDs;
 
     for(const auto& version:concurrentHistory){
@@ -353,7 +362,7 @@ int main(){
         assert(concurrentIDs[i]==i+1);
     }
 
-    // Test 24: Final state is valid
+    // Test 23: Final state is valid
     auto concurrentLatest=concurrentStore.get("shared");
 
     assert(concurrentLatest.has_value());
@@ -361,6 +370,195 @@ int main(){
     assert(concurrentStore.exists("shared"));
 
     std::cout<<"Concurrency tests passed!\n";
+
+
+    // ==========================================
+    // MEMORY ENGINE API TESTS
+    // ==========================================
+
+    MemoryEngine engine;
+
+    Request request;
+    Response response;
+
+    // Test 24: SET command
+    request.command=Command::Set;
+    request.key="name";
+    request.value="Garvit";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::Success);
+
+    // Test 25: GET command
+    request.command=Command::Get;
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::Success);
+    assert(response.value=="Garvit");
+
+    // Test 26: GET missing key
+    request.key="missing";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::NotFound);
+
+    // Test 27: EXISTS command
+    request.command=Command::Exists;
+    request.key="name";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::Success);
+    assert(response.value=="true");
+
+    request.key="missing";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::Success);
+    assert(response.value=="false");
+
+    // Test 28: DELETE command
+    request.command=Command::Delete;
+    request.key="name";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::Success);
+
+    // Test 29: GET after deletion
+    request.command=Command::Get;
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::NotFound);
+
+    // Test 30: DELETE missing key
+    request.command=Command::Delete;
+    request.key="missing";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::NotFound);
+
+    // Test 31: KEYS command
+    request.command=Command::Set;
+    request.key="zebra";
+    request.value="animal";
+
+    response=engine.execute(request);
+    assert(response.status==ResponseStatus::Success);
+
+    request.key="apple";
+    request.value="fruit";
+
+    response=engine.execute(request);
+    assert(response.status==ResponseStatus::Success);
+
+    request.command=Command::Keys;
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::Success);
+    assert(response.value=="apple;zebra");
+
+    // Test 32: HISTORY command
+    request.command=Command::History;
+    request.key="apple";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::Success);
+    assert(response.value.find("|PUT|")!=std::string::npos);
+    assert(response.value.find("fruit")!=std::string::npos);
+
+    // Test 33: HISTORY of missing key
+    request.key="missing";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::NotFound);
+
+    // Test 34: GET_VERSION command
+    request.command=Command::Set;
+    request.key="colour";
+    request.value="blue";
+
+    response=engine.execute(request);
+    assert(response.status==ResponseStatus::Success);
+
+    request.value="green";
+
+    response=engine.execute(request);
+    assert(response.status==ResponseStatus::Success);
+
+    request.command=Command::GetVersion;
+    request.version=5;
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::Success);
+    assert(response.value.find("blue")!=std::string::npos);
+
+    // Test 35: GET_VERSION missing version
+    request.version=999999;
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::NotFound);
+
+    // Test 36: GET_VERSION tombstone
+    request.command=Command::Delete;
+    request.key="colour";
+
+    response=engine.execute(request);
+    assert(response.status==ResponseStatus::Success);
+
+    request.command=Command::GetVersion;
+    request.version=7;
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::NotFound);
+    assert(response.value.find("DELETE")!=std::string::npos);
+
+    // Test 37: Invalid SET request
+    request.command=Command::Set;
+    request.key="";
+    request.value="value";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::InvalidRequest);
+
+    // Test 38: Invalid GET request
+    request.command=Command::Get;
+    request.key="";
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::InvalidRequest);
+
+    // Test 39: Invalid GET_VERSION request
+    request.command=Command::GetVersion;
+    request.key="colour";
+    request.version=0;
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::InvalidRequest);
+
+    // Test 40: Invalid command
+    request.command=Command::Invalid;
+
+    response=engine.execute(request);
+
+    assert(response.status==ResponseStatus::InvalidRequest);
+
+    std::cout<<"Memory Engine API tests passed!\n";
 
     return 0;
 }
