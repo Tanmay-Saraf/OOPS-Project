@@ -64,6 +64,7 @@ add_security_test(EntropyDetectorTest tests/EntropyDetectorTest.cpp)
 add_security_test(SecurityPublicApiTest tests/SecurityPublicApiTest.cpp)
 add_security_test(SecurityLockdownPolicyTest tests/SecurityLockdownPolicyTest.cpp)
 add_security_test(SecurityCommandPolicyTest tests/SecurityCommandPolicyTest.cpp)
+add_security_test(SecurityRequestValidationTest tests/SecurityRequestValidationTest.cpp)
 
 add_executable(SecurityEngineExample examples/security_engine_example.cpp)
 target_link_libraries(SecurityEngineExample PRIVATE oops::security_engine)
@@ -82,8 +83,6 @@ install(TARGETS security_engine
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
-# Install only the stable public headers. Internal detector and state-manager
-# headers remain available to in-tree tests but are not part of the package API.
 install(FILES include/common/Request.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/common
 )

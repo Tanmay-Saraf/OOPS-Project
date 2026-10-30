@@ -8,6 +8,7 @@ int main() {
 
     request.command = oops::Command::Set;
     request.key = "canary_001";
+    request.value = "trigger";
 
     oops::SecurityDecision decision = engine.processRequest(request);
 
@@ -27,6 +28,7 @@ int main() {
     oops::Request writeRequest{};
     writeRequest.command = oops::Command::Set;
     writeRequest.key = "normal_record";
+    writeRequest.value = "blocked_value";
 
     decision = engine.processRequest(writeRequest);
 

@@ -6,8 +6,71 @@
 #include "security/SecurityLogger.h"
 #include "security/StateManager.h"
 
+#include <algorithm>
+#include <cctype>
 #include <mutex>
 #include <string>
+
+namespace {
+
+bool isValidKey(const std::string& key) {
+    return !key.empty() && std::none_of(
+        key.begin(), key.end(),
+        [](unsigned char character) {
+            return std::isspace(character) != 0;
+        }
+    );
+}
+
+bool hasNonWhitespaceValue(const std::string& value) {
+    return std::any_of(
+        value.begin(), value.end(),
+        [](unsigned char character) {
+            return std::isspace(character) == 0;
+        }
+    );
+}
+
+bool hasNoArguments(const oops::Request& request) {
+    return request.key.empty() &&
+           request.value.empty() &&
+           request.version == 0;
+}
+
+bool hasValidRequestShape(const oops::Request& request) {
+    switch (request.command) {
+        case oops::Command::Set:
+            return isValidKey(request.key) &&
+                   hasNonWhitespaceValue(request.value) &&
+                   request.version == 0;
+
+        case oops::Command::Get:
+        case oops::Command::Delete:
+        case oops::Command::Exists:
+        case oops::Command::History:
+            return isValidKey(request.key) &&
+                   request.value.empty() &&
+                   request.version == 0;
+
+        case oops::Command::GetVersion:
+            return isValidKey(request.key) &&
+                   request.value.empty();
+
+        case oops::Command::Keys:
+        case oops::Command::Ping:
+        case oops::Command::Quit:
+        case oops::Command::Save:
+        case oops::Command::Recover:
+        case oops::Command::Status:
+            return hasNoArguments(request);
+
+        case oops::Command::Invalid:
+        default:
+            return false;
+    }
+}
+
+}
 
 namespace oops {
 
@@ -46,6 +109,13 @@ public:
 
     SecurityDecision processRequest(const Request& request) {
         std::lock_guard<std::mutex> lock(requestMutex);
+
+        if (!hasValidRequestShape(request)) {
+            return deny(
+                "Malformed request denied by security policy",
+                "Request fields do not match the command format"
+            );
+        }
 
         SecurityDecision decision;
         decision.currentState = stateManager.getState();

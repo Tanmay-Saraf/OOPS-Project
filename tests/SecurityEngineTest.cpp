@@ -1,4 +1,3 @@
-
 #include "security/SecurityEngine.h"
 #include "TestCheck.hpp"
 #include <iostream>
@@ -13,6 +12,7 @@ int main() {
     Request request{};
 
     request.command = Command::Get;
+    request.key = "initial_record";
     SecurityDecision decision = engine.processRequest(request);
     TEST_CHECK(decision.allowed);
 
@@ -101,7 +101,8 @@ int main() {
     }
 
     TEST_CHECK(allowedRequests + blockedRequests == 100);
-    TEST_CHECK(blockedRequests >= 1);
+    TEST_CHECK(allowedRequests == 99);
+    TEST_CHECK(blockedRequests == 1);
 
     Request statusRequest{};
     statusRequest.command = Command::Status;
@@ -109,6 +110,29 @@ int main() {
         concurrentEngine.processRequest(statusRequest);
 
     TEST_CHECK(status.currentState == SecurityState::SUSPECTED);
+
+    SecurityEngine suspectedEngine;
+    Request writeRequest{};
+    writeRequest.command = Command::Set;
+    writeRequest.key = "ordinary_key";
+    writeRequest.value = "ordinary_value";
+
+    for (int i = 0; i < 100; ++i) {
+        decision = suspectedEngine.processRequest(writeRequest);
+    }
+    TEST_CHECK(!decision.allowed);
+    TEST_CHECK(decision.currentState == SecurityState::SUSPECTED);
+
+    decision = suspectedEngine.processRequest(writeRequest);
+    TEST_CHECK(!decision.allowed);
+    TEST_CHECK(decision.currentState == SecurityState::SUSPECTED);
+
+    Request suspectedRead{};
+    suspectedRead.command = Command::Get;
+    suspectedRead.key = "ordinary_key";
+    decision = suspectedEngine.processRequest(suspectedRead);
+    TEST_CHECK(decision.allowed);
+    TEST_CHECK(decision.currentState == SecurityState::SUSPECTED);
 
     std::cout << "All SecurityEngine tests passed!\n";
     return 0;
