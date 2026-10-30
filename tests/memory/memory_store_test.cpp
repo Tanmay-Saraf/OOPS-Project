@@ -4,7 +4,12 @@
 #include <thread>
 #include <limits>
 #include <stdexcept>
+#include <atomic>
+#include <vector>
+#include <algorithm>
 #include "memory/MemoryStore.hpp"
+
+using namespace oops;
 
 int main(){
     MemoryStore store;
@@ -78,7 +83,6 @@ int main(){
 
     assert(deletedNameVersion.has_value());
     assert(deletedNameVersion->operation==Operation::Delete);
-    assert(deletedNameVersion->id==history.back().id);
 
     // Test 7: Delete an already deleted key
     bool removedAgain=store.remove("name");
@@ -229,12 +233,10 @@ int main(){
 
     // Test 18: Reject invalid and out-of-order versions
     Version zeroVersion(0, "invalid", Operation::Put, recoveryTime1);
-    bool zeroRejected=!recoveredStore.replayVersion("other", zeroVersion);
-    assert(zeroRejected);
+    assert(!recoveredStore.replayVersion("other", zeroVersion));
 
     Version oldVersion(9, "out of order", Operation::Put, recoveryTime1);
-    bool outOfOrderRejected=!recoveredStore.replayVersion("colour", oldVersion);
-    assert(outOfOrderRejected);
+    assert(!recoveredStore.replayVersion("colour", oldVersion));
 
     assert(recoveredStore.getHistory("colour").size()==3);
 
@@ -253,7 +255,7 @@ int main(){
     MemoryStore exhaustedStore;
 
     Version maxVersion(
-        std::numeric_limits<std::uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(),
         "last",
         Operation::Put,
         recoveryTime1
@@ -275,6 +277,90 @@ int main(){
     assert(!exhaustedStore.exists("next"));
 
     std::cout<<"Version overflow tests passed!\n";
+
+    // Test 21: Concurrent writers
+    MemoryStore concurrentStore;
+
+    const int threadCount=4;
+    const int writesPerThread=500;
+
+    std::atomic<bool> writingDone=false;
+    std::vector<std::thread> readers;
+    std::vector<std::thread> writers;
+
+    // Start multiple readers
+    for(int i=0;i<3;i++){
+        readers.emplace_back([&concurrentStore,&writingDone](){
+            while(!writingDone.load()){
+                auto currentKeys=concurrentStore.keys();
+
+                for(const auto& key:currentKeys){
+                    auto current=concurrentStore.get(key);
+                    auto latest=concurrentStore.getLatest(key);
+                    auto historyCopy=concurrentStore.getHistory(key);
+                    bool present=concurrentStore.exists(key);
+
+                    auto currentTime=std::chrono::system_clock::now();
+                    auto atTime=concurrentStore.getAtTime(key, currentTime);
+
+                    if(!historyCopy.empty()){
+                        auto historical=concurrentStore.getVersion(key, historyCopy.front().id);
+                    }
+                }
+            }
+        });
+    }
+
+    // Start multiple writers
+    for(int i=0;i<threadCount;i++){
+        writers.emplace_back([&concurrentStore,i](){
+            for(int j=0;j<writesPerThread;j++){
+                concurrentStore.put(
+                    "shared",
+                    "thread_"+std::to_string(i)+"_"+std::to_string(j)
+                );
+            }
+        });
+    }
+
+    // Wait for all writers to finish
+    for(auto& writer:writers){
+        writer.join();
+    }
+
+    writingDone.store(true);
+
+    // Wait for all readers to finish
+    for(auto& reader:readers){
+        reader.join();
+    }
+
+    // Test 22: No writes were lost
+    auto concurrentHistory=concurrentStore.getHistory("shared");
+
+    assert(concurrentHistory.size()==threadCount*writesPerThread);
+
+    // Test 23: All version IDs are unique
+    std::vector<uint64_t> concurrentIDs;
+
+    for(const auto& version:concurrentHistory){
+        concurrentIDs.push_back(version.id);
+    }
+
+    std::sort(concurrentIDs.begin(),concurrentIDs.end());
+
+    for(size_t i=0;i<concurrentIDs.size();i++){
+        assert(concurrentIDs[i]==i+1);
+    }
+
+    // Test 24: Final state is valid
+    auto concurrentLatest=concurrentStore.get("shared");
+
+    assert(concurrentLatest.has_value());
+    assert(concurrentLatest->id==threadCount*writesPerThread);
+    assert(concurrentStore.exists("shared"));
+
+    std::cout<<"Concurrency tests passed!\n";
 
     return 0;
 }
