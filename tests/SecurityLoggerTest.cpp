@@ -63,7 +63,7 @@ int main() {
             TEST_CHECK(content.find(entry) != std::string::npos);
         }
     }
-
+    
     const auto missingParent = testDirectory / "missing_parent";
     bool openFailureReported = false;
     try {

@@ -1,5 +1,4 @@
 #pragma once
-
 #include "common/Request.hpp"
 #include "security/DetectionResult.h"
 

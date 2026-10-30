@@ -20,7 +20,7 @@ public:
         const std::string& logFile = "security.log"
     );
     ~SecurityEngine();
-
+    
     SecurityEngine(const SecurityEngine&) = delete;
     SecurityEngine& operator=(const SecurityEngine&) = delete;
 
