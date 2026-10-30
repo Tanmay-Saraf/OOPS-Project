@@ -1,11 +1,15 @@
-
 # Compiled C/C++ files
 *.o
 *.obj
 *.a
 *.so
 *.so.*
+*.lib
+*.dll
+*.dylib
+*.exe
 *.out
+*.pdb
 
 # Project executables generated during development
 /src/network/RequestParser
@@ -13,12 +17,16 @@
 
 # Build directories
 /build/
+/build-*/
+/out/
 /cmake-build-*/
 /CMakeFiles/
 /CMakeCache.txt
 /cmake_install.cmake
 /compile_commands.json
 /Testing/
+
+# Test files: ignore generated files, preserve source files
 /tests/*
 !/tests/*.cpp
 !/tests/*.hpp
@@ -28,13 +36,27 @@
 
 # CMake-generated files
 Makefile
+CTestTestfile.cmake
 *.cmake.user
+
+# Local networking test scripts
+/test_half_close.py
+/test_server.sh
+
+# Python-generated files
+__pycache__/
+*.pyc
+.pytest_cache/
 
 # Test output and coverage
 *.gcda
 *.gcno
 *.profraw
 coverage/
+
+# Logs
+*.log
+/security.log
 
 # Debugging artifacts
 core
@@ -56,9 +78,5 @@ core.*
 .DS_Store
 Thumbs.db
 
-/security.log
-
-#Fish Test files
+# Local Fish scripts
 *.fish
-./test_half_close.py
-./test_server.sh
