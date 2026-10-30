@@ -189,6 +189,8 @@ namespace oops{
                 std::string &curr_receive_buffer = conn.receive_buffer;
                 while((pos = curr_receive_buffer.find('\n')) != std::string::npos){
 
+                    if(stopping_.load()) return;
+
                     std::string cmd = curr_receive_buffer.substr(0, pos);
                     curr_receive_buffer.erase(0, pos+1);
                     if (!cmd.empty() && cmd.back() == '\r') {
@@ -224,11 +226,8 @@ namespace oops{
 
             if(bytes_recvd == 0){
 
-                auto client_id = conn.client_id;
-
-                epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn.fd.get(), nullptr);
-                connections_.erase(conn.fd.get());
-                dispatchNextRequest(client_id);
+                conn.peer_shutdown_write = true;
+                updateClientEvents(fd, EPOLLOUT);
                 return;
             }
 
@@ -321,6 +320,12 @@ namespace oops{
                         }
 
                         it->second.send_buffer.append(serializeResponse(completed.response));
+                        
+                        std::uint32_t flags = EPOLLOUT;
+                        if(!it->second.peer_shutdown_write) {
+                            flags |= EPOLLIN;
+                        }
+
                         updateClientEvents(completed.client_fd, EPOLLIN | EPOLLOUT);
 
                     }
@@ -331,7 +336,7 @@ namespace oops{
                     if(it == connections_.end()) continue;
                     Connection &conn = it->second;
                     if(conn.generation != generation) continue;
-                    if(events[i].events & EPOLLIN) handleClientEvent(event_fd);
+                    if(events[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) handleClientEvent(event_fd);
                     if(events[i].events & EPOLLOUT) handleWriteEvent(event_fd);
                 }
 
@@ -412,7 +417,10 @@ namespace oops{
                         response.message = "Invalid request";
                     }else {
 
-                        GuardDecision decision = guard_->check(request);
+                        GuardDecision decision;
+                        decision.allowed = true;
+
+                        if(request.command != Command::Ping && request.command != Command::Quit) decision = guard_->check(request);
 
                         if(!decision.allowed) {
 
@@ -503,6 +511,22 @@ namespace oops{
                     epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn_fd, nullptr);
                     connections_.erase(conn_fd);
                     return;
+                }
+
+                if(conn.peer_shutdown_write) {
+                    auto state_it = client_states_.find(conn.client_id);
+
+                    if(state_it == client_states_.end() ||
+                    (!state_it->second->request_processing &&
+                        state_it->second->pending_requests.empty())) {
+                        epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn_fd, nullptr);
+                        connections_.erase(conn_fd);
+                        return;
+                    }
+
+                    // Requests are still outstanding; wait for their responses.
+                    updateClientEvents(conn_fd, 0);
+                    break;
                 }
 
                 updateClientEvents(conn_fd, EPOLLIN);

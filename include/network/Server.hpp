@@ -45,6 +45,7 @@ namespace oops {
 
         std::atomic<std::uint64_t> outstanding_requests_{0};
         std::atomic<bool> stopping_{false};
+        std::atomic<bool> shutdown_begun_{false};
 
         UniqueFd server_fd_;
         UniqueFd epoll_fd_;

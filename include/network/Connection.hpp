@@ -14,6 +14,7 @@ namespace oops {
         std::string send_buffer;
         bool discarding_oversized_request = false;
         bool close_after_write = false;
+        bool peer_shutdown_write = false;
         std::uint64_t client_id = 0;
     };
 
