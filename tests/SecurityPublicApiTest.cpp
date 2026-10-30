@@ -9,7 +9,7 @@
 int main() {
     oops::SecurityEngine engine;
 
-    oops::Request request;
+    oops::Request request{};
     request.command = oops::Command::Get;
     request.key = "test_key";
 
@@ -17,26 +17,21 @@ int main() {
     TEST_CHECK(decision.allowed);
     TEST_CHECK(decision.currentState == oops::SecurityState::RUNNING);
 
-    request.command = oops::Command::Invalid;
-    decision = engine.processRequest(request);
-    TEST_CHECK(!decision.allowed);
+    const auto expectDenied = [&engine](oops::Command command) {
+        oops::Request input{};
+        input.command = command;
+        TEST_CHECK(!engine.processRequest(input).allowed);
+    };
 
-    request.command = static_cast<oops::Command>(255);
-    decision = engine.processRequest(request);
-    TEST_CHECK(!decision.allowed);
-    TEST_CHECK(decision.currentState == oops::SecurityState::RUNNING);
+    expectDenied(oops::Command::Invalid);
+    expectDenied(static_cast<oops::Command>(255));
+    expectDenied(oops::Command::Ping);
+    expectDenied(oops::Command::Quit);
+    expectDenied(oops::Command::Save);
+    expectDenied(oops::Command::Recover);
 
-    request.command = oops::Command::Ping;
-    TEST_CHECK(!engine.processRequest(request).allowed);
-
-    request.command = oops::Command::Quit;
-    TEST_CHECK(!engine.processRequest(request).allowed);
-
-    request.command = oops::Command::Save;
-    TEST_CHECK(!engine.processRequest(request).allowed);
-
-    request.command = oops::Command::Recover;
-    TEST_CHECK(!engine.processRequest(request).allowed);
+    TEST_CHECK(engine.processRequest(request).currentState ==
+               oops::SecurityState::RUNNING);
 
     const auto missingParent =
         std::filesystem::temp_directory_path() /
