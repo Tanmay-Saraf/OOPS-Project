@@ -35,7 +35,7 @@ namespace oops {
                     break;
             }
 
-            return GuardDecision{decision.allowed, decision.reason};
+            return GuardDecision{decision.allowed, decision.reason, state};
 
         }
 
