@@ -60,5 +60,5 @@ Thumbs.db
 
 #Fish Test files
 *.fish
-./test_half_close.py
-./test_server.sh
+/test_half_close.py
+/test_server.sh

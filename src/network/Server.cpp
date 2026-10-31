@@ -326,7 +326,7 @@ namespace oops{
                             flags |= EPOLLIN;
                         }
 
-                        updateClientEvents(completed.client_fd, EPOLLIN | EPOLLOUT);
+                        updateClientEvents(completed.client_fd, flags);
 
                     }
 
@@ -508,8 +508,20 @@ namespace oops{
                 int conn_fd = conn.fd.get();
 
                 if(conn.close_after_write) {
+
+                    const auto client_id = conn.client_id;
+
                     epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn_fd, nullptr);
                     connections_.erase(conn_fd);
+
+                    auto state_it = client_states_.find(client_id);
+
+                    if(state_it != client_states_.end() && 
+                        !state_it->second->request_processing && 
+                        state_it->second->pending_requests.empty()) {
+                        client_states_.erase(state_it);
+                    }
+
                     return;
                 }
 
@@ -520,6 +532,9 @@ namespace oops{
                     (!state_it->second->request_processing &&
                         state_it->second->pending_requests.empty())) {
                         epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn_fd, nullptr);
+                        if (state_it != client_states_.end()) {
+                            client_states_.erase(state_it);
+                        }
                         connections_.erase(conn_fd);
                         return;
                     }
@@ -538,8 +553,11 @@ namespace oops{
                 send_buffer.erase(0, sent_bytes);
                 continue;
             } else if(sent_bytes == 0) {
+
+                const auto client_id = conn.client_id;
                 epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn.fd.get(), nullptr);
                 connections_.erase(conn.fd.get());
+                dispatchNextRequest(client_id);
                 return;
             }
             else if(sent_bytes == -1) {
@@ -549,9 +567,13 @@ namespace oops{
                 }
                 if(errno == EAGAIN || errno == EWOULDBLOCK) break;
 
+
+                const auto client_id = conn.client_id;
+
                 int fd = conn.fd.get();
                 epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, fd, nullptr);
                 connections_.erase(fd);
+                dispatchNextRequest(client_id); 
                 return;
             }
 
