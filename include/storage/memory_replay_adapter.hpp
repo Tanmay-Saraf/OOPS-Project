@@ -2,8 +2,9 @@
 
 #include "recovery_manager.hpp"
 
-class MemoryStore;
-
+namespace oops{
+    class MemoryStore;
+}
 namespace storage {
-    ReplayHandler make_memory_replay_handler(MemoryStore& memory);
+    ReplayHandler make_memory_replay_handler(oops::MemoryStore& memory);
 }

@@ -34,7 +34,7 @@ void storage::WalWriter::append(const WalRecord& record){
         ssize_t result = ::write(
             fd,
             bytes.data() + bytes_written,
-            bytes.size() + bytes_written
+            bytes.size() - bytes_written
         );
 
         if(result < 0){

@@ -33,17 +33,17 @@ std::optional<std::chrono::system_clock::time_point> convert_timestamp(std::uint
 
 }
 
-ReplayHandler make_memory_replay_handler(MemoryStore& memory) {
+ReplayHandler make_memory_replay_handler(oops::MemoryStore& memory) {
     return [&memory](const WalRecord& record) {
-        Operation operation;
+        oops::Operation operation;
 
         switch(record.type){
             case RecordType::PUT:
-                operation = Operation::Put;
+                operation = oops::Operation::Put;
                 break;
 
             case RecordType::DELETE:
-                operation = Operation::Delete;
+                operation = oops::Operation::Delete;
                 break;
 
             default:
@@ -56,7 +56,7 @@ ReplayHandler make_memory_replay_handler(MemoryStore& memory) {
             return false;
         }
 
-        Version version(
+        oops::Version version(
             record.sequence_number,
             record.value,
             operation,
