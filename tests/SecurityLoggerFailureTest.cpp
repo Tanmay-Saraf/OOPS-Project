@@ -63,7 +63,7 @@ int main() {
         request.command = oops::Command::Set;
         request.key = "ordinary_key";
         request.value =
-            "aZ8!mQ2@xL5#pR9$wT4^nB7&cD6*eF0";
+            "aZ8!mQ2@xL5#pR9$wT4^nB7&cD6*eF09";
 
         const auto decision = engine.processRequest(request);
 
@@ -74,7 +74,32 @@ int main() {
             decision.currentState == oops::SecurityState::RUNNING
         );
     }
+        // TEST 4: Correlated alerts must deny writes even if logging fails.
+    {
+        oops::SecurityEngine engine(failingLog);
 
+        oops::Request request{};
+        request.command = oops::Command::Set;
+        request.key = "ordinary_key";
+        request.value = "ordinary_value";
+
+        // Build up modification activity without triggering the threshold.
+        for (int i = 0; i < 99; ++i) {
+            const auto decision = engine.processRequest(request);
+            TEST_CHECK(decision.allowed);
+        }
+
+        // The 100th write also contains a high-entropy value.
+        request.value =
+            "aZ8!mQ2@xL5#pR9$wT4^nB7&cD6*eF09";
+
+        const auto decision = engine.processRequest(request);
+
+        TEST_CHECK(!decision.allowed);
+        TEST_CHECK(
+            decision.currentState == oops::SecurityState::SUSPECTED
+        );
+    }
     std::cout << "All SecurityLoggerFailure tests passed!\n";
 
 #else

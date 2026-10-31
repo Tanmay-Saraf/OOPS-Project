@@ -193,13 +193,13 @@ public:
         DetectionResult entropyResult = entropyDetector.analyze(request);
 
         if (activityResult.Suspicious_flag && entropyResult.Suspicious_flag) {
-            stateManager.enterLockdown();
+            stateManager.markSuspected();
             decision.allowed = false;
             decision.reason =
                 "Request denied due to correlated security alerts";
             decision.currentState = stateManager.getState();
             tryLogEvent(
-                "CRITICAL",
+                "HIGH",
                 "High modification activity combined with a high-entropy value"
             );
             return decision;

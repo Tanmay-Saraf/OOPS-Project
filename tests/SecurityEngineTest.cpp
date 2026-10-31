@@ -39,7 +39,7 @@ int main() {
 
     entropyRequest.command = Command::Set;
     entropyRequest.key = "normal_record";
-    entropyRequest.value = "aZ8!mQ2@xL5#pR9$wT4^nB7&cD6*eF0";
+    entropyRequest.value = "aZ8!mQ2@xL5#pR9$wT4^nB7&cD6*eF09";
 
     SecurityDecision entropyDecision =
         entropyOnlyEngine.processRequest(entropyRequest);
@@ -61,13 +61,67 @@ int main() {
         TEST_CHECK(entropyDecision.allowed);
     }
 
-    combinedRequest.value = "aZ8!mQ2@xL5#pR9$wT4^nB7&cD6*eF0";
+    combinedRequest.value = "aZ8!mQ2@xL5#pR9$wT4^nB7&cD6*eF09";
     entropyDecision = combinedEngine.processRequest(combinedRequest);
 
     TEST_CHECK(!entropyDecision.allowed);
-    TEST_CHECK(entropyDecision.currentState == SecurityState::LOCKDOWN);
+    TEST_CHECK(entropyDecision.currentState == SecurityState::SUSPECTED);
     TEST_CHECK(entropyDecision.reason ==
            "Request denied due to correlated security alerts");
+
+
+        // SUSPECTED state: ordinary reads remain available.
+    Request combinedSuspectedRead{};
+    combinedSuspectedRead.command = Command::Get;
+    combinedSuspectedRead.key = "normal_record";
+
+    SecurityDecision suspectedReadDecision =
+        combinedEngine.processRequest(combinedSuspectedRead);
+    TEST_CHECK(suspectedReadDecision.allowed);
+    TEST_CHECK(
+        suspectedReadDecision.currentState == SecurityState::SUSPECTED
+    );
+
+    // SUSPECTED state: further writes are denied.
+    Request suspectedWrite{};
+    suspectedWrite.command = Command::Set;
+    suspectedWrite.key = "another_record";
+    suspectedWrite.value = "ordinary text";
+
+    SecurityDecision suspectedWriteDecision =
+        combinedEngine.processRequest(suspectedWrite);
+
+    TEST_CHECK(!suspectedWriteDecision.allowed);
+    TEST_CHECK(
+        suspectedWriteDecision.currentState == SecurityState::SUSPECTED
+    );
+
+    // Canary detection must still cause immediate lockdown.
+    Request canaryEscalation{};
+    canaryEscalation.command = Command::Set;
+    canaryEscalation.key = "canary_002";
+    canaryEscalation.value = "trigger";
+
+    SecurityDecision canaryDecision =
+        combinedEngine.processRequest(canaryEscalation);
+
+    TEST_CHECK(!canaryDecision.allowed);
+    TEST_CHECK(
+        canaryDecision.currentState == SecurityState::LOCKDOWN
+    );
+
+    // Only GET remains available during lockdown.
+    Request lockdownRead{};
+    lockdownRead.command = Command::Get;
+    lockdownRead.key = "normal_record";
+
+    SecurityDecision lockdownReadDecision =
+        combinedEngine.processRequest(lockdownRead);
+
+    TEST_CHECK(lockdownReadDecision.allowed);
+    TEST_CHECK(
+        lockdownReadDecision.currentState == SecurityState::LOCKDOWN
+    );
 
     SecurityEngine concurrentEngine;
     std::atomic<int> allowedRequests{0};

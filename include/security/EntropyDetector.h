@@ -11,8 +11,8 @@ private:
 
 public:
     explicit EntropyDetector(
-        double threshold = 4.2,
-        std::size_t minimumValueLength = 16
+        double threshold = 4.7,
+        std::size_t minimumValueLength = 32
     );
 
     DetectionResult analyze(const oops::Request& request) override;
