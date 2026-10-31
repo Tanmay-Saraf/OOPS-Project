@@ -65,7 +65,10 @@ add_security_test(SecurityPublicApiTest tests/SecurityPublicApiTest.cpp)
 add_security_test(SecurityLockdownPolicyTest tests/SecurityLockdownPolicyTest.cpp)
 add_security_test(SecurityCommandPolicyTest tests/SecurityCommandPolicyTest.cpp)
 add_security_test(SecurityRequestValidationTest tests/SecurityRequestValidationTest.cpp)
-
+add_security_test(SecurityLoggerFailureTest tests/SecurityLoggerFailureTest.cpp)
+set_tests_properties(SecurityLoggerFailureTest
+    PROPERTIES SKIP_RETURN_CODE 77
+)
 add_executable(SecurityEngineExample examples/security_engine_example.cpp)
 target_link_libraries(SecurityEngineExample PRIVATE oops::security_engine)
 if(MSVC)
