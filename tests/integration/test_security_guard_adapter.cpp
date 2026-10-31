@@ -30,4 +30,37 @@ TEST(SecurityGuardAdapterTest, ProtocolCommandsAreRejectedBySecurityEngine) {
     }
 }
 
+TEST(SecurityGuardAdapterTest, CanaryTriggersLockdownAndBlocksWrites) {
+    SecurityGuardAdapter guard("security_guard_adapter_test.log");
+
+    Request attack;
+    attack.command = Command::Set;
+    attack.key = "canary_001";
+    attack.value = "compromised";
+
+    GuardDecision attackDecision = guard.check(attack);
+
+    EXPECT_FALSE(attackDecision.allowed);
+    EXPECT_EQ(attackDecision.state, "LOCKDOWN");
+
+    Request read;
+    read.command = Command::Get;
+    read.key = "probe";
+
+    GuardDecision readDecision = guard.check(read);
+
+    EXPECT_TRUE(readDecision.allowed);
+    EXPECT_EQ(readDecision.state, "LOCKDOWN");
+
+    Request write;
+    write.command = Command::Set;
+    write.key = "probe";
+    write.value = "changed";
+
+    GuardDecision writeDecision = guard.check(write);
+
+    EXPECT_FALSE(writeDecision.allowed);
+    EXPECT_EQ(writeDecision.state, "LOCKDOWN");
+}
+
 }
