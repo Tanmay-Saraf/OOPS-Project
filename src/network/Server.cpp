@@ -18,11 +18,11 @@
 #include <utility>
 #include <iostream>
 #include <algorithm>
-
 //System Calls Includes
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/eventfd.h>
+
 
 namespace oops{
 
@@ -30,6 +30,7 @@ namespace oops{
         if (port_ < 1 || port_ > 65535) {
             throw std::invalid_argument("Invalid port number");
         }
+
         thread_pool_ = std::make_unique<ThreadPool>(4);
 
         if(!memory_) {
@@ -50,6 +51,12 @@ namespace oops{
         }
 
         server_fd_ = UniqueFd(fd);
+
+        int reuse = 1;
+
+        if(setsockopt(server_fd_.get(), SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1) {
+            throw std::runtime_error("Failed to set SO_REUSEADDR");
+        }
 
         struct sockaddr_in address {};
         address.sin_family = AF_INET;
@@ -110,17 +117,32 @@ namespace oops{
 
         while(true){
 
+            if(stopping_.load()) {
+                break;
+            }
+
             int client_fd = accept4(server_fd_.get(), nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
             if(client_fd == -1){
+
+                if(errno == EINTR){
+                    continue;
+                }
+
                 if(errno == EAGAIN || errno == EWOULDBLOCK){
                     break;
-                }else {
-                    throw std::runtime_error("Failed to accept client connection");
                 }
+
+                throw std::runtime_error("Failed to accept client connection");
+                
             }
 
             UniqueFd client(client_fd);
+
+            if(stopping_.load()) {
+                break;
+            }
+
             int client_flags = fcntl(client.get(), F_GETFL, 0);
             if(client_flags == -1){
                 throw std::runtime_error("Could not retrieve client flags");
@@ -144,6 +166,7 @@ namespace oops{
             client_event.events = EPOLLIN;
 
             if(epoll_ctl(epoll_fd_.get(), EPOLL_CTL_ADD, conn.fd.get(), &client_event) == -1){
+                client_states_.erase(conn.client_id);
                 throw std::runtime_error("Failed to add client to epoll");
             }
 
@@ -206,7 +229,6 @@ namespace oops{
 
                     Request request = parseRequest(cmd);
 
-                    std::cout << "Received valid request: " << cmd << '\n';
                     handleRequest(request, conn.fd.get());
 
                 }
@@ -225,6 +247,14 @@ namespace oops{
             }
 
             if(bytes_recvd == 0){
+
+                // A final request without its newline delimiter is incomplete.
+                if(!conn.receive_buffer.empty()) {
+                    Request request;
+                    request.command = Command::Invalid;
+                    handleRequest(request, fd);
+                    conn.receive_buffer.clear();
+                }
 
                 conn.peer_shutdown_write = true;
                 updateClientEvents(fd, EPOLLOUT);
@@ -299,7 +329,18 @@ namespace oops{
                                     state_it->second->request_processing = false;
                                     if(completed.command == Command::Quit && completed.response.status == ResponseStatus::Success) {
 
-                                        while(!state_it->second->pending_requests.empty()) state_it->second->pending_requests.pop();
+                                        while(!state_it->second->pending_requests.empty()) {
+                                            state_it->second->pending_requests.pop();
+                                        }
+
+                                        auto conn_it = std::find_if(connections_.begin(), connections_.end(), [&completed](const auto& entry) {
+                                                return entry.second.client_id == completed.client_id;
+                                            }
+                                        );
+
+                                        if(conn_it == connections_.end()) {
+                                            client_states_.erase(state_it);
+                                        }
 
                                     } else {
                                         dispatchNextRequest(completed.client_id);
@@ -441,10 +482,19 @@ namespace oops{
                                     response.message = "BYE";
                                     break;
                                 }
+                                case Command::Status: {
+
+                                    response.status = ResponseStatus::Success;
+                                    response.value = decision.state.empty() ? "UNKNOWN" : decision.state;
+                                    break;
+
+                                }
                                 case Command::Set:
                                 case Command::Get:
                                 case Command::Delete:
                                 case Command::Exists:
+                                case Command::History:
+                                case Command::GetVersion:
                                 case Command::Keys:{
                                     response = memory_->execute(request);
                                     break;
@@ -483,8 +533,7 @@ namespace oops{
             });
         } catch(const std::exception &e) {
             std::cerr << "Failed to enqueue request: " << e.what() << '\n'; 
-            state.pending_requests.push(request);
-            state.request_processing = false;
+            throw;
         }
 
     }
@@ -554,6 +603,7 @@ namespace oops{
                 continue;
             } else if(sent_bytes == 0) {
 
+                
                 const auto client_id = conn.client_id;
                 epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn.fd.get(), nullptr);
                 connections_.erase(conn.fd.get());

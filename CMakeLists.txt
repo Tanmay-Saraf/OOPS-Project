@@ -69,6 +69,18 @@ add_executable(test_parses
     tests/network/test_parser.cpp
 )
 
+add_executable(test_response_serializer
+    tests/network/test_response_serializer.cpp
+)
+
+target_link_libraries(test_response_serializer
+    PRIVATE
+        request_parser
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_response_serializer)
+
 target_link_libraries(test_parses
     PRIVATE
         request_parser

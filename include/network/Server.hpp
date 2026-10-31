@@ -51,9 +51,9 @@ namespace oops {
         UniqueFd epoll_fd_;
         UniqueFd response_event_fd_;
         std::unique_ptr<RequestGuard> guard_;
+        std::unique_ptr<MemoryEngineAdapter> memory_;
         ThreadSafeQueue<CompletedResponse> completed_responses_;
         std::unique_ptr<ThreadPool> thread_pool_;
-        std::unique_ptr<MemoryEngineAdapter> memory_;
 
         void setup();
         void acceptClients();

@@ -75,7 +75,7 @@ Request parseRequest(const std::string& line) {
 
         auto [ptr, ec] = std::from_chars(begin, end, parsedVersion);
 
-        if (ec != std::errc{} || ptr != end) {
+        if (ec != std::errc{} || ptr != end || parsedVersion == 0) {
             return request;
         }
 
