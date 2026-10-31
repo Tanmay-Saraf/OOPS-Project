@@ -120,4 +120,22 @@ if(OOPS_SECURITY_DIR)
             OOPS_WITH_SECURITY
     )
 
+    add_executable(test_security_guard_adapter
+        tests/integration/test_security_guard_adapter.cpp
+    )
+
+    target_include_directories(test_security_guard_adapter
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    target_link_libraries(test_security_guard_adapter
+        PRIVATE
+            request_parser
+            oops::security_engine
+            GTest::gtest_main
+    )
+
+    gtest_discover_tests(test_security_guard_adapter)
+
 endif()
