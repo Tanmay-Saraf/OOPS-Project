@@ -8,6 +8,9 @@
 #include <atomic>
 #include <vector>
 #include <algorithm>
+#include <cstdint>
+#include <mutex>
+#include <string>
 #include "memory/MemoryEngine.hpp"
 
 using namespace oops;
@@ -314,8 +317,16 @@ int main(){
                     auto currentTime=std::chrono::system_clock::now();
                     auto atTime=concurrentStore.getAtTime(key, currentTime);
 
+                    // These reads are intentionally concurrent snapshots; their values
+                    // are not compared because a writer may update the key between calls.
+                    (void)current;
+                    (void)latest;
+                    (void)present;
+                    (void)atTime;
+
                     if(!historyCopy.empty()){
                         auto historical=concurrentStore.getVersion(key, historyCopy.front().id);
+                        (void)historical;
                     }
                 }
             }
@@ -559,6 +570,323 @@ int main(){
     assert(response.status==ResponseStatus::InvalidRequest);
 
     std::cout<<"Memory Engine API tests passed!\n";
+
+
+
+    // ==========================================
+    // WAL CALLBACK TESTS
+    // ==========================================
+
+    // Test 41: PUT callback receives the generated Version before memory commit
+    MemoryStore callbackStore;
+    bool putCallbackCalled=false;
+    bool putWasUncommitted=false;
+    std::uint64_t callbackVersionID=0;
+    Operation callbackOperation=Operation::Delete;
+    std::string callbackKey;
+    std::string callbackValue;
+
+    callbackStore.put("wal_key", "wal_value", [&](const std::string& key, const Version& version){
+        putCallbackCalled=true;
+        callbackKey=key;
+        callbackVersionID=version.id;
+        callbackOperation=version.operation;
+        callbackValue=version.value;
+        putWasUncommitted=!callbackStore.get(key).has_value();
+    });
+
+    assert(putCallbackCalled);
+    assert(putWasUncommitted);
+    assert(callbackKey=="wal_key");
+    assert(callbackVersionID==1);
+    assert(callbackOperation==Operation::Put);
+    assert(callbackValue=="wal_value");
+    assert(callbackStore.get("wal_key")->value=="wal_value");
+
+    // Test 42: Failed PUT callback prevents the memory mutation
+    MemoryStore failedPutStore;
+    bool putExceptionCaught=false;
+
+    try{
+        failedPutStore.put("failed", "value", [](const std::string&, const Version&){
+            throw std::runtime_error("WAL append failed");
+        });
+    }
+    catch(const std::runtime_error&){
+        putExceptionCaught=true;
+    }
+
+    assert(putExceptionCaught);
+    assert(!failedPutStore.get("failed").has_value());
+    assert(failedPutStore.getHistory("failed").empty());
+
+    // A failed callback consumes its reserved ID, but does not add a Version.
+    failedPutStore.put("after_failure", "value");
+    auto afterFailedPut=failedPutStore.getLatest("after_failure");
+    assert(afterFailedPut.has_value());
+    assert(afterFailedPut->id==2);
+
+    // Test 43: DELETE callback runs before the tombstone is committed
+    MemoryStore callbackDeleteStore;
+    callbackDeleteStore.put("delete_me", "original");
+
+    bool deleteCallbackCalled=false;
+    bool deleteSawOriginalValue=false;
+    bool callbackReceivedTombstone=false;
+
+    bool callbackDeleteResult=callbackDeleteStore.remove(
+        "delete_me",
+        [&](const std::string& key, const Version& version){
+            deleteCallbackCalled=true;
+            auto beforeDelete=callbackDeleteStore.get(key);
+            deleteSawOriginalValue=beforeDelete.has_value() && beforeDelete->value=="original";
+            callbackReceivedTombstone=version.operation==Operation::Delete && version.value.empty();
+        }
+    );
+
+    assert(callbackDeleteResult);
+    assert(deleteCallbackCalled);
+    assert(deleteSawOriginalValue);
+    assert(callbackReceivedTombstone);
+    assert(!callbackDeleteStore.get("delete_me").has_value());
+
+    // Test 44: Failed DELETE callback leaves the key unchanged
+    MemoryStore failedDeleteStore;
+    failedDeleteStore.put("keep", "important");
+    bool deleteExceptionCaught=false;
+
+    try{
+        failedDeleteStore.remove("keep", [](const std::string&, const Version&){
+            throw std::runtime_error("WAL append failed");
+        });
+    }
+    catch(const std::runtime_error&){
+        deleteExceptionCaught=true;
+    }
+
+    assert(deleteExceptionCaught);
+    auto stillPresent=failedDeleteStore.get("keep");
+    assert(stillPresent.has_value());
+    assert(stillPresent->value=="important");
+    assert(failedDeleteStore.getHistory("keep").size()==1);
+
+    // Test 45: Invalid DELETE operations do not invoke the callback
+    MemoryStore invalidDeleteStore;
+    int invalidDeleteCallbackCalls=0;
+    auto countDeleteCallback=[&](const std::string&, const Version&){
+        invalidDeleteCallbackCalls++;
+    };
+
+    assert(!invalidDeleteStore.remove("missing", countDeleteCallback));
+    assert(invalidDeleteCallbackCalls==0);
+
+    invalidDeleteStore.put("once", "value");
+    assert(invalidDeleteStore.remove("once", countDeleteCallback));
+    assert(invalidDeleteCallbackCalls==1);
+    assert(!invalidDeleteStore.remove("once", countDeleteCallback));
+    assert(invalidDeleteCallbackCalls==1);
+
+    // Test 46: Concurrent callback writes preserve callback and memory order
+    MemoryStore walConcurrentStore;
+    const int walThreadCount=4;
+    const int walWritesPerThread=100;
+    std::vector<std::uint64_t> persistedIDs;
+    std::mutex persistedIDsMtx;
+    std::vector<std::thread> walWriters;
+
+    for(int i=0;i<walThreadCount;i++){
+        walWriters.emplace_back([&walConcurrentStore,&persistedIDs,&persistedIDsMtx,i](){
+            for(int j=0;j<walWritesPerThread;j++){
+                walConcurrentStore.put(
+                    "shared",
+                    "value_"+std::to_string(i)+"_"+std::to_string(j),
+                    [&](const std::string& key, const Version& version){
+                        assert(key=="shared");
+                        std::lock_guard<std::mutex> lock(persistedIDsMtx);
+                        persistedIDs.push_back(version.id);
+                    }
+                );
+            }
+        });
+    }
+
+    for(auto& writer:walWriters){
+        writer.join();
+    }
+
+    auto walConcurrentHistory=walConcurrentStore.getHistory("shared");
+    assert(walConcurrentHistory.size()==walThreadCount*walWritesPerThread);
+    assert(persistedIDs.size()==walConcurrentHistory.size());
+
+    for(size_t i=0;i<persistedIDs.size();i++){
+        assert(persistedIDs[i]==i+1);
+        assert(walConcurrentHistory[i].id==persistedIDs[i]);
+    }
+
+    std::cout<<"WAL callback tests passed!\n";
+
+
+    // ==========================================
+    // MEMORY ENGINE WAL / RECOVERY API TESTS
+    // ==========================================
+
+    // Test 47: MemoryEngine passes SET versions to its registered callback
+    MemoryEngine callbackEngine;
+    int engineCallbackCalls=0;
+    std::string engineCallbackKey;
+    std::uint64_t engineCallbackVersionID=0;
+    Operation engineCallbackOperation=Operation::Delete;
+    bool engineCallbackSawUncommittedValue=false;
+
+    callbackEngine.setWalAppendHandler([&](const std::string& key, const Version& version){
+        engineCallbackCalls++;
+        engineCallbackKey=key;
+        engineCallbackVersionID=version.id;
+        engineCallbackOperation=version.operation;
+
+        Request readDuringCallback;
+        readDuringCallback.command=Command::Get;
+        readDuringCallback.key=key;
+        Response beforeCommit=callbackEngine.execute(readDuringCallback);
+        engineCallbackSawUncommittedValue=beforeCommit.status==ResponseStatus::NotFound;
+    });
+
+    Request walRequest;
+    walRequest.command=Command::Set;
+    walRequest.key="engine_wal_key";
+    walRequest.value="engine_wal_value";
+    Response walResponse=callbackEngine.execute(walRequest);
+
+    assert(walResponse.status==ResponseStatus::Success);
+    assert(engineCallbackCalls==1);
+    assert(engineCallbackKey=="engine_wal_key");
+    assert(engineCallbackVersionID==1);
+    assert(engineCallbackOperation==Operation::Put);
+    assert(engineCallbackSawUncommittedValue);
+
+    // Test 48: MemoryEngine reports a failed WAL callback and does not commit SET
+    callbackEngine.setWalAppendHandler([](const std::string&, const Version&){
+        throw std::runtime_error("WAL append failed");
+    });
+
+    walRequest.key="engine_failed_key";
+    walRequest.value="must_not_appear";
+    walResponse=callbackEngine.execute(walRequest);
+
+    assert(walResponse.status==ResponseStatus::InternalError);
+
+    walRequest.command=Command::Get;
+    walResponse=callbackEngine.execute(walRequest);
+    assert(walResponse.status==ResponseStatus::NotFound);
+
+    // Test 49: MemoryEngine does not call WAL for an invalid DELETE
+    int invalidEngineDeleteCalls=0;
+    callbackEngine.setWalAppendHandler([&](const std::string&, const Version&){
+        invalidEngineDeleteCalls++;
+    });
+
+    walRequest.command=Command::Delete;
+    walRequest.key="does_not_exist";
+    walResponse=callbackEngine.execute(walRequest);
+    assert(walResponse.status==ResponseStatus::NotFound);
+    assert(invalidEngineDeleteCalls==0);
+
+    // Test 50: MemoryEngine passes DELETE tombstones to the callback before commit
+    walRequest.command=Command::Set;
+    walRequest.key="engine_delete_key";
+    walRequest.value="still_here_during_callback";
+    walResponse=callbackEngine.execute(walRequest);
+    assert(walResponse.status==ResponseStatus::Success);
+
+    bool engineDeleteSawOldValue=false;
+    bool engineDeleteCallbackReceivedTombstone=false;
+    callbackEngine.setWalAppendHandler([&](const std::string& key, const Version& version){
+        engineDeleteCallbackReceivedTombstone=version.operation==Operation::Delete && version.value.empty();
+        Request readDuringCallback;
+        readDuringCallback.command=Command::Get;
+        readDuringCallback.key=key;
+        Response beforeCommit=callbackEngine.execute(readDuringCallback);
+        engineDeleteSawOldValue=beforeCommit.status==ResponseStatus::Success &&
+                                beforeCommit.value=="still_here_during_callback";
+    });
+
+    walRequest.command=Command::Delete;
+    walRequest.key="engine_delete_key";
+    walResponse=callbackEngine.execute(walRequest);
+    assert(walResponse.status==ResponseStatus::Success);
+    assert(engineDeleteSawOldValue);
+    assert(engineDeleteCallbackReceivedTombstone);
+
+    // Test 51: Failed MemoryEngine DELETE callback preserves the key
+    walRequest.command=Command::Set;
+    walRequest.key="engine_protected_key";
+    walRequest.value="protected";
+    callbackEngine.setWalAppendHandler([](const std::string&, const Version&){});
+    walResponse=callbackEngine.execute(walRequest);
+    assert(walResponse.status==ResponseStatus::Success);
+
+    callbackEngine.setWalAppendHandler([](const std::string&, const Version&){
+        throw std::runtime_error("WAL append failed");
+    });
+
+    walRequest.command=Command::Delete;
+    walRequest.key="engine_protected_key";
+    walResponse=callbackEngine.execute(walRequest);
+    assert(walResponse.status==ResponseStatus::InternalError);
+
+    walRequest.command=Command::Get;
+    walResponse=callbackEngine.execute(walRequest);
+    assert(walResponse.status==ResponseStatus::Success);
+    assert(walResponse.value=="protected");
+
+    // Test 52: MemoryEngine replay forwarding and clear forwarding
+    MemoryEngine recoveryEngine;
+    Version forwardedVersion(
+        42,
+        "recovered_value",
+        Operation::Put,
+        std::chrono::system_clock::now()
+    );
+
+    assert(recoveryEngine.replayVersion("recovered_key", forwardedVersion));
+    assert(!recoveryEngine.replayVersion("another_key", forwardedVersion));
+
+    Request recoveryRequest;
+    recoveryRequest.command=Command::Get;
+    recoveryRequest.key="recovered_key";
+    Response recoveryResponse=recoveryEngine.execute(recoveryRequest);
+    assert(recoveryResponse.status==ResponseStatus::Success);
+    assert(recoveryResponse.value=="recovered_value");
+
+    // Replay must also advance the next version ID through MemoryEngine.
+    recoveryRequest.command=Command::Set;
+    recoveryRequest.key="written_after_replay";
+    recoveryRequest.value="new_value";
+    recoveryResponse=recoveryEngine.execute(recoveryRequest);
+    assert(recoveryResponse.status==ResponseStatus::Success);
+
+    recoveryRequest.command=Command::History;
+    recoveryResponse=recoveryEngine.execute(recoveryRequest);
+    assert(recoveryResponse.status==ResponseStatus::Success);
+    assert(recoveryResponse.value.find("43|PUT|")==0);
+
+    recoveryEngine.clear();
+    recoveryResponse=recoveryEngine.execute(recoveryRequest);
+    assert(recoveryResponse.status==ResponseStatus::NotFound);
+
+    // clear() must reset version numbering as well as remove records.
+    recoveryRequest.command=Command::Set;
+    recoveryRequest.key="after_clear";
+    recoveryRequest.value="fresh_database";
+    recoveryResponse=recoveryEngine.execute(recoveryRequest);
+    assert(recoveryResponse.status==ResponseStatus::Success);
+
+    recoveryRequest.command=Command::History;
+    recoveryResponse=recoveryEngine.execute(recoveryRequest);
+    assert(recoveryResponse.status==ResponseStatus::Success);
+    assert(recoveryResponse.value.find("1|PUT|")==0);
+
+    std::cout<<"MemoryEngine WAL and recovery API tests passed!\n";
 
     return 0;
 }

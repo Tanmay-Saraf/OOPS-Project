@@ -28,24 +28,47 @@ namespace oops{
         return id;
     }
     void MemoryStore::put(const std::string &key, const std::string &value){
-        std::lock_guard<std::mutex> lock(mtx);
-        Version version(allocateVersionID(), value, Operation::Put, std::chrono::system_clock::now());
-        addVersion(key, version);
+        put(key,value,WalAppendHandler{});
     }
 
+    void MemoryStore::put(const std::string& key, const std::string &value, const WalAppendHandler &handler){
+        std::lock_guard<std::mutex> writeLock(writemtx);
+        std::uint64_t id;
+        auto timestamp=std::chrono::system_clock::now();
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            id=allocateVersionID();
+        }
+        Version version(id,value,Operation::Put,timestamp);
+        if(handler)handler(key,version);
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            addVersion(key,version);
+        }
+    }
     bool MemoryStore::remove(const std::string& key){
-        std::lock_guard<std::mutex> lock(mtx);
-        auto it=records.find(key);
-        if(it==records.end())return false;
+        return remove(key,WalAppendHandler{});
+    }
 
-        const Version* latest=it->second.getLatest();
-        if(latest==nullptr || latest->operation==Operation::Delete)return false;
-
-        Version version(allocateVersionID(), "", Operation::Delete, std::chrono::system_clock::now());
-        it->second.addVersion(version);
+    bool MemoryStore::remove(const std::string &key, const WalAppendHandler &handler){
+        std::lock_guard<std::mutex> writeLock(writemtx);
+        std::uint64_t id;
+        {
+            std::lock_guard <std::mutex> lock(mtx);
+            auto it=records.find(key);
+            if(it==records.end())return false;
+            const Version* latest=it->second.getLatest();
+            if(latest==nullptr||latest->operation==Operation::Delete)return false;
+            id=allocateVersionID();
+        }
+        Version version(id, "", Operation::Delete, std::chrono::system_clock::now());
+        if(handler)handler(key,version);
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            addVersion(key, version);
+        }
         return true;
     }
-
     std::optional<Version> MemoryStore::get(const std::string& key) const{
         std::optional <Version> latest= getLatest(key);
         if(!latest.has_value()) return std::nullopt;
@@ -106,6 +129,7 @@ namespace oops{
         return std::nullopt;
     }
     bool MemoryStore::replayVersion(const std::string &key, const Version& version){
+        std::lock_guard<std::mutex> writeLock(writemtx);
         std::lock_guard<std::mutex> lock(mtx);
         if(version.id==0)return false;
         for(const auto &entry:records){
@@ -128,4 +152,43 @@ namespace oops{
         }
         return true;
     }
+    Version MemoryStore::prepareVersion(const std::string& value, Operation operation){
+        std::lock_guard<std::mutex> lock(mtx);
+        if(operation!=Operation::Put&& operation!=Operation::Delete){
+            throw std::invalid_argument("Invalid version operation");
+        }
+        auto timestamp=std::chrono::time_point_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now()
+        );
+        std::string storedValue=value;
+        if (operation==Operation::Delete)storedValue="";
+        return Version(allocateVersionID(), storedValue, operation, timestamp);
+    }
+    bool MemoryStore::commitVersion(const std::string& key, const Version& version){
+    std::lock_guard<std::mutex> lock(mtx);
+    if(key.empty() || version.id==0)return false;
+    if(version.id>=nextVersionID &&
+       !(versionIDsExhausted && version.id==std::numeric_limits<uint64_t>::max())){
+        return false;
+    }
+    for(const auto& entry:records){
+        for(const auto& existing:entry.second.getAllVersions()){
+            if(existing.id==version.id)return false;
+        }
+    }
+    auto it=records.find(key);
+    if(it!=records.end()){
+        const Version* latest=it->second.getLatest();
+        if(latest!=nullptr && latest->id>=version.id)return false;
+    }
+    addVersion(key, version);
+    return true;
+}
+void MemoryStore::clear(){
+    std::lock_guard<std::mutex> writeLock(writemtx);
+    std::lock_guard<std::mutex> lock(mtx);
+    records.clear();
+    nextVersionID=1;
+    versionIDsExhausted=false;
+}
 }

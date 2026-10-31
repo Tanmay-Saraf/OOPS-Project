@@ -12,7 +12,12 @@ namespace oops{
                         response.message= "Key and value are required";
                         return response;
                     }
-                    store.put(request.key, request.value);
+                    WalAppendHandler handler;
+                    {
+                        std::lock_guard<std::mutex> lock(walHandlerMtx);
+                        handler=walAppendHandler;
+                    }
+                    store.put(request.key, request.value, handler);
                     response.status=ResponseStatus::Success;
                     response.message="Key stored successfully";
                     return response;
@@ -31,7 +36,6 @@ namespace oops{
                         return response;
                     }
                     response.status=ResponseStatus::Success;
-                    response.message="Key retrieved successfully";
                     response.value=result->value;
                     return response;
                 }
@@ -41,7 +45,12 @@ namespace oops{
                         response.message="Key is required";
                         return response;
                     }
-                    bool removed=store.remove(request.key);
+                    WalAppendHandler handler;
+                    {
+                    std::lock_guard<std::mutex> lock(walHandlerMtx);
+                    handler=walAppendHandler;
+                    }
+                    bool removed=store.remove(request.key,handler);
                     if(!removed){
                         response.status=ResponseStatus::NotFound;
                         response.message="Key does not exist";
@@ -59,14 +68,12 @@ namespace oops{
                     }
                     bool found=store.exists(request.key);
                     response.status=ResponseStatus::Success;
-                    response.message="Existence check completed";
                     response.value=found?"true":"false";
                     return response;
                 }
                 case Command::Keys:{
                     auto currentKeys=store.keys();
                     response.status=ResponseStatus::Success;
-                    response.message="Keys retrieved successfully";
                     for(size_t i=0; i<currentKeys.size(); i++){
                         if(i>0)response.value+=";";
                         response.value+=currentKeys[i];
@@ -86,7 +93,6 @@ namespace oops{
                         return response;
                     }
                     response.status=ResponseStatus::Success;
-                    response.message="History retrieved successfully";
                     for(size_t i=0; i<history.size(); i++){
                         auto timestamp=std::chrono::duration_cast<std::chrono::microseconds>(
                             history[i].timestamp.time_since_epoch()
@@ -131,10 +137,8 @@ namespace oops{
                     response.value+=version->value;
                     if(version->operation==Operation::Delete){
                         response.status=ResponseStatus::NotFound;
-                        response.message="Requested version is a deletion tombstone";
                     }else{
                         response.status=ResponseStatus::Success;
-                        response.message="Historical version retrieved successfully";
                     }
                     return response;
                 }          
@@ -149,5 +153,16 @@ namespace oops{
             response.message="Memory Engine operation failed";
             response.value.clear();
         }
+        return response;
+    }
+    void MemoryEngine::setWalAppendHandler(WalAppendHandler handler){
+        std::lock_guard <std::mutex> lock(walHandlerMtx);
+        walAppendHandler=handler;
+    }
+    bool MemoryEngine::replayVersion(const std::string& key, const Version& version){
+        return store.replayVersion(key, version);
+    }
+    void MemoryEngine::clear(){
+        store.clear();
     }
 }

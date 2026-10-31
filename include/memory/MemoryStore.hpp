@@ -7,9 +7,11 @@
 #include <vector>
 #include <mutex>
 #include <optional>
+#include <functional>
 #include "VersionChain.hpp"
 
 namespace oops{
+    using WalAppendHandler=std::function<void(const std::string&, const Version&)>;
     class MemoryStore{
         private:
             std::unordered_map<std::string, VersionChain> records;
@@ -18,6 +20,7 @@ namespace oops{
             mutable std::mutex mtx;
             void addVersion(const std::string &key, const Version& version);
             uint64_t allocateVersionID();
+            std::mutex writemtx;
 
         public:
             std::optional<Version> getLatest(const std::string& key) const;
@@ -30,5 +33,10 @@ namespace oops{
             std::vector<std::string> keys() const;
             std::optional<Version> getVersion(const std::string& key, uint64_t versionID) const;
             bool replayVersion(const std::string &key, const Version& version);
-};
+            Version prepareVersion(const std::string& value, Operation operation);
+            bool commitVersion(const std::string &key, const Version& version);
+            void put(const std::string &key, const std::string &value, const WalAppendHandler &handler);
+            bool remove(const std::string &key, const WalAppendHandler& handler);
+            void clear();
+    };
 }
