@@ -9,9 +9,11 @@ EntropyDetector::EntropyDetector(
 ) : threshold(threshold),
     minimumValueLength(minimumValueLength) {
 
-    if (threshold <= 0.0 || threshold > 8.0) {
+    if (!std::isfinite(threshold) ||
+        threshold <= 0.0 ||
+        threshold > 8.0) {
         throw std::invalid_argument(
-            "Entropy threshold must be in (0, 8]"
+            "Entropy threshold must be finite and in (0, 8]"
         );
     }
 

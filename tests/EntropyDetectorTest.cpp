@@ -2,7 +2,7 @@
 #include "TestCheck.hpp"
 #include <iostream>
 #include <stdexcept>
-
+#include <limits>
 int main() {
     EntropyDetector detector;
 
@@ -46,7 +46,18 @@ int main() {
     }
 
     TEST_CHECK(invalidThresholdRejected);
+    // Test: Reject NaN entropy threshold
+    bool nanThresholdRejected = false;
 
+    try {
+        EntropyDetector invalidNan(
+            std::numeric_limits<double>::quiet_NaN(), 16
+        );
+    } catch (const std::invalid_argument&) {
+        nanThresholdRejected = true;
+    }
+
+    TEST_CHECK(nanThresholdRejected);
     std::cout << "All EntropyDetector tests passed!\n";
     return 0;
 }
