@@ -18,7 +18,24 @@ namespace oops {
 
             SecurityDecision decision = engine_.processRequest(request);
 
-            return GuardDecision{decision.allowed, decision.reason};
+            std::string state;
+
+
+            switch(decision.currentState) {
+                case SecurityState::RUNNING:
+                    state = "RUNNING";
+                    break;
+
+                case SecurityState::SUSPECTED:
+                    state = "SUSPECTED";
+                    break;
+
+                case SecurityState::LOCKDOWN:
+                    state = "LOCKDOWN";
+                    break;
+            }
+
+            return GuardDecision{decision.allowed, decision.reason, state};
 
         }
 

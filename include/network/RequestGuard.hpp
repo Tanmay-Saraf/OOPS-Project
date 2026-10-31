@@ -11,6 +11,7 @@ namespace oops {
 
         bool allowed = true;
         std::string reason;
+        std::string state;
 
     };
 

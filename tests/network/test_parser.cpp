@@ -96,3 +96,16 @@ TEST(RequestParserTest, ExtraPingArgument) {
 
     EXPECT_EQ(request.command, Command::Invalid);
 }
+
+TEST(RequestParserTest, ZeroVersion) {
+    Request request = parseRequest("GET_VERSION colour 0");
+
+    EXPECT_EQ(request.command, Command::Invalid);
+}
+
+TEST(RequestParserTest, ValidHistory) {
+    Request request = parseRequest("HISTORY colour");
+
+    EXPECT_EQ(request.command, Command::History);
+    EXPECT_EQ(request.key, "colour");
+}

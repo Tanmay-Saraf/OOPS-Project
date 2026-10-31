@@ -80,3 +80,7 @@ Thumbs.db
 
 # Local Fish scripts
 *.fish
+
+# Local networking test scripts
+/test_half_close.py
+/test_server.sh

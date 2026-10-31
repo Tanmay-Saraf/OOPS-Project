@@ -29,8 +29,7 @@ std::string serializeResponse(const Response& response) {
             break;
     }
 
-    const std::string& detail =
-        !response.message.empty() ? response.message : response.value;
+    const std::string& detail = !response.value.empty() ? response.value : response.message;
 
     if (!detail.empty()) {
         serialized += " ";
