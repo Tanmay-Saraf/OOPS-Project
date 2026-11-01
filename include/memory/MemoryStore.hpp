@@ -33,8 +33,6 @@ namespace oops{
             std::vector<std::string> keys() const;
             std::optional<Version> getVersion(const std::string& key, uint64_t versionID) const;
             bool replayVersion(const std::string &key, const Version& version);
-            Version prepareVersion(const std::string& value, Operation operation);
-            bool commitVersion(const std::string &key, const Version& version);
             void put(const std::string &key, const std::string &value, const WalAppendHandler &handler);
             bool remove(const std::string &key, const WalAppendHandler& handler);
             void clear();

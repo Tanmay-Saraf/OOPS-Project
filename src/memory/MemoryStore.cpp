@@ -152,38 +152,6 @@ namespace oops{
         }
         return true;
     }
-    Version MemoryStore::prepareVersion(const std::string& value, Operation operation){
-        std::lock_guard<std::mutex> lock(mtx);
-        if(operation!=Operation::Put&& operation!=Operation::Delete){
-            throw std::invalid_argument("Invalid version operation");
-        }
-        auto timestamp=std::chrono::time_point_cast<std::chrono::microseconds>(
-            std::chrono::system_clock::now()
-        );
-        std::string storedValue=value;
-        if (operation==Operation::Delete)storedValue="";
-        return Version(allocateVersionID(), storedValue, operation, timestamp);
-    }
-    bool MemoryStore::commitVersion(const std::string& key, const Version& version){
-    std::lock_guard<std::mutex> lock(mtx);
-    if(key.empty() || version.id==0)return false;
-    if(version.id>=nextVersionID &&
-       !(versionIDsExhausted && version.id==std::numeric_limits<uint64_t>::max())){
-        return false;
-    }
-    for(const auto& entry:records){
-        for(const auto& existing:entry.second.getAllVersions()){
-            if(existing.id==version.id)return false;
-        }
-    }
-    auto it=records.find(key);
-    if(it!=records.end()){
-        const Version* latest=it->second.getLatest();
-        if(latest!=nullptr && latest->id>=version.id)return false;
-    }
-    addVersion(key, version);
-    return true;
-}
 void MemoryStore::clear(){
     std::lock_guard<std::mutex> writeLock(writemtx);
     std::lock_guard<std::mutex> lock(mtx);
