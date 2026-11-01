@@ -86,3 +86,15 @@ Thumbs.db
 # Local networking test scripts
 /test_half_close.py
 /test_server.sh
+# Memory and Storage tests
+!/tests/memory/
+/tests/memory/*
+!/tests/memory/*.cpp
+!/tests/memory/*.hpp
+!/tests/storage/
+/tests/storage/*
+!/tests/storage/*.cpp
+!/tests/storage/*.hpp
+
+# Runtime WAL and application data
+/data/

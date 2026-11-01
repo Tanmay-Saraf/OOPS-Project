@@ -1,4 +1,10 @@
+
 #include "network/Server.hpp"
+#include "memory/MemoryEngine.hpp"
+
+#include "storage/memory_replay_adapter.hpp"
+#include "storage/recovery_manager.hpp"
+#include "storage/wal_writer.hpp"
 
 #ifdef OOPS_WITH_SECURITY
 #include "integration/SecurityGuardAdapter.hpp"
@@ -9,6 +15,7 @@
 #include <chrono>
 #include <cerrno>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <pthread.h>
@@ -54,28 +61,29 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    // Block these signals before creating the server thread. New threads
-    // inherit this mask, and the main thread receives them synchronously
-    // through sigtimedwait(), avoiding work inside an asynchronous handler.
+    // Block shutdown signals before creating the server thread.
     sigset_t shutdown_signals;
     sigemptyset(&shutdown_signals);
     sigaddset(&shutdown_signals, SIGINT);
     sigaddset(&shutdown_signals, SIGTERM);
 
-    const int mask_result = pthread_sigmask(SIG_BLOCK, &shutdown_signals, nullptr);
+    const int mask_result =
+        pthread_sigmask(SIG_BLOCK, &shutdown_signals, nullptr);
+
     if (mask_result != 0) {
         std::cerr << "Failed to block shutdown signals: "
-                  << std::system_error(mask_result, std::generic_category()).what()
+                  << std::system_error(
+                         mask_result,
+                         std::generic_category()).what()
                   << '\n';
         return 1;
     }
 
-    // Some shells mark SIGINT as ignored for background jobs. Reset the
-    // dispositions after blocking so SIGINT/SIGTERM become pending signals
-    // that sigtimedwait() can consume rather than being discarded.
+    // Reset signal dispositions so sigtimedwait() can receive them.
     struct sigaction default_action {};
     default_action.sa_handler = SIG_DFL;
     sigemptyset(&default_action.sa_mask);
+
     if (sigaction(SIGINT, &default_action, nullptr) == -1 ||
         sigaction(SIGTERM, &default_action, nullptr) == -1) {
         std::cerr << "Failed to configure shutdown signals\n";
@@ -83,26 +91,105 @@ int main(int argc, char* argv[]) {
     }
 
     try {
+        // ----------------------------------------------------
+        // 1. Initialize persistent storage
+        // ----------------------------------------------------
+
+        const std::string wal_path = "data/kittydb.wal";
+
+        std::filesystem::create_directories("data");
+
+        // Declare the writer before the Memory Engine.
+        // It must outlive the engine's WAL callback.
+        storage::WalWriter wal_writer(wal_path);
+
+        // ----------------------------------------------------
+        // 2. Initialize Memory Engine
+        // ----------------------------------------------------
+
+        auto memory_engine = std::make_unique<oops::MemoryEngine>();
+
+        // ----------------------------------------------------
+        // 3. Recover memory from the existing WAL
+        // ----------------------------------------------------
+
+        storage::RecoveryManager recovery_manager;
+
+        const auto recovery_report = recovery_manager.recover(
+            wal_path,
+            storage::make_memory_replay_handler(*memory_engine)
+        );
+
+        if (!recovery_report.fully_recovered()) {
+            std::string error_message = "WAL recovery failed";
+
+            if (recovery_report.error_offset.has_value()) {
+                error_message += " at byte offset " +
+                    std::to_string(*recovery_report.error_offset);
+            }
+
+            if (recovery_report.replay_failed) {
+                error_message += " (record replay failed)";
+            }
+
+            throw std::runtime_error(error_message);
+        }
+
+        std::cout << "WAL recovery completed. Restored "
+                  << recovery_report.records_restored
+                  << " records.\n";
+
+        // ----------------------------------------------------
+        // 4. Connect Memory Engine to WAL
+        // ----------------------------------------------------
+
+        memory_engine->setWalAppendHandler(
+            storage::make_wal_append_handler(wal_writer)
+        );
+
+        // ----------------------------------------------------
+        // 5. Initialize Server with Security + Memory
+        // ----------------------------------------------------
+
 #ifdef OOPS_WITH_SECURITY
-        oops::Server server(port, std::make_unique<oops::SecurityGuardAdapter>());
+        oops::Server server(
+            port,
+            std::make_unique<oops::SecurityGuardAdapter>(),
+            std::move(memory_engine)
+        );
 #else
-        oops::Server server(port);
+        oops::Server server(
+            port,
+            std::make_unique<oops::AllowAllGuard>(),
+            std::move(memory_engine)
+        );
 #endif
+
+        // ----------------------------------------------------
+        // 6. Run Server
+        // ----------------------------------------------------
 
         std::exception_ptr server_error;
         std::atomic<bool> server_finished{false};
 
-        std::thread server_thread([&server, &server_error, &server_finished]() {
-            try {
-                server.run();
-            } catch (...) {
-                server_error = std::current_exception();
+        std::thread server_thread(
+            [&server, &server_error, &server_finished]() {
+                try {
+                    server.run();
+                } catch (...) {
+                    server_error = std::current_exception();
+                }
+
+                server_finished.store(
+                    true,
+                    std::memory_order_release
+                );
             }
-            server_finished.store(true, std::memory_order_release);
-        });
+        );
 
         std::cout << "Server listening on port " << port
-                  << ". Press Ctrl+C to stop.\n" << std::flush;
+                  << ". Press Ctrl+C to stop.\n"
+                  << std::flush;
 
         bool received_shutdown_signal = false;
         std::exception_ptr wait_error;
@@ -110,29 +197,36 @@ int main(int argc, char* argv[]) {
         while (!server_finished.load(std::memory_order_acquire)) {
             timespec timeout{};
             timeout.tv_sec = 0;
-            timeout.tv_nsec = 100'000'000; // 100 ms
+            timeout.tv_nsec = 100'000'000;
 
-            const int received = sigtimedwait(&shutdown_signals, nullptr, &timeout);
+            const int received =
+                sigtimedwait(&shutdown_signals, nullptr, &timeout);
+
             if (received == SIGINT || received == SIGTERM) {
                 received_shutdown_signal = true;
                 break;
             }
 
             if (received == -1 && (errno == EAGAIN || errno == EINTR)) {
-                continue; // timeout or unrelated signal interruption
+                continue;
             }
 
             if (received == -1) {
                 wait_error = std::make_exception_ptr(
-                    std::runtime_error("Failed while waiting for shutdown signal"));
+                    std::runtime_error(
+                        "Failed while waiting for shutdown signal"
+                    )
+                );
                 break;
             }
         }
 
         if ((received_shutdown_signal || wait_error) &&
             !server_finished.load(std::memory_order_acquire)) {
+
             std::cout << "\nReceived termination signal; shutting down...\n"
                       << std::flush;
+
             try {
                 server.requestShutdown();
             } catch (...) {
@@ -147,11 +241,13 @@ int main(int argc, char* argv[]) {
         if (server_error) {
             std::rethrow_exception(server_error);
         }
+
         if (wait_error) {
             std::rethrow_exception(wait_error);
         }
 
         std::cout << "Server stopped cleanly.\n";
+
     } catch (const std::exception& error) {
         std::cerr << "Server error: " << error.what() << '\n';
         return 1;
