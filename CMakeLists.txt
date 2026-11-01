@@ -117,6 +117,18 @@ target_link_libraries(test_parses
 
 gtest_discover_tests(test_parses)
 
+add_executable(test_security_guard_adapter
+    tests/integration/test_security_guard_adapter.cpp
+)
+
+target_link_libraries(test_security_guard_adapter
+    PRIVATE
+        security_guard_adapter
+        GTest::gtest_main
+)
+
+gtest_discover_tests(test_security_guard_adapter)
+
 # ============================================================
 # TCP Server Executable
 # ============================================================

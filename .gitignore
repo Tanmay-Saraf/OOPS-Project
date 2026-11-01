@@ -33,6 +33,8 @@
 !/tests/network/
 /tests/network/*
 !/tests/network/*.cpp
+!/tests/integration/
+!/tests/integration/test_security_guard_adapter.cpp
 
 # CMake-generated files
 Makefile
