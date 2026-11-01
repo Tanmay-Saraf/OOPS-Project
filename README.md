@@ -1,67 +1,69 @@
-# Ransomware-Resilient Database System
+# OOPS Project — Networking Server
 
-This repository contains the Security & Defense component of a broader
-ransomware-resilient database project. The security component can evaluate
-parsed requests and return an approval/denial decision; the full Network Guard,
-Memory Engine, and Disk Storage & Recovery integration must be validated
-separately before the project can claim end-to-end database recovery behavior.
+This repository contains the networking layer for the OOPS project. The networking implementation is a Linux TCP server written in C++20 using raw POSIX sockets and `epoll` (not Boost.Asio or standalone Asio).
 
-## Security & Defense capabilities
+## What the networking layer does
 
-- Canary-record detection for configured canary keys.
-- Sliding-window modification-rate, per-minute volume, and distinct-key signals.
-- Shannon entropy analysis for sufficiently long `SET` values.
-- Monotonic `RUNNING` → `SUSPECTED` → `LOCKDOWN` state escalation.
-- In-process `oops::SecurityEngine::processRequest(const oops::Request&)` API.
-- Caller-safe decision reasons and a thread-protected internal security log.
-- `LOCKDOWN` permits only `GET` through the security engine.
-- `SAVE`, `RECOVER`, `PING`, `QUIT`, invalid, and unknown commands are not
-  approved for forwarding by this engine. Network Guard owns protocol-only
-  commands and must handle `PING`/`QUIT` itself.
+- Accepts multiple TCP clients using a non-blocking listening socket.
+- Uses `epoll` to monitor socket readiness without dedicating one thread to every connection.
+- Parses newline-delimited text requests.
+- Uses a four-worker thread pool to execute requests away from the event loop.
+- Maintains a per-client request queue so requests from the same client are processed in order.
+- Uses `eventfd` to wake the event loop when workers publish completed responses.
+- Passes storage requests through a `MemoryEngineAdapter` interface.
+- Passes eligible requests through a `RequestGuard` interface; an optional Security_Defense adapter can be enabled at build time.
+- Uses RAII (`UniqueFd`) to manage file descriptors.
 
-## Build and test
+## Current implementation scope
 
-Requires CMake 3.16+ and a C++20 compiler.
+The default backend is `TemporaryMemoryEngine`, which stores data in an in-memory `unordered_map`. It currently implements `SET`, `GET`, `DELETE`, `EXISTS`, and `KEYS`. Data is lost when the server process exits.
 
-```powershell
+`HISTORY` and `GET_VERSION` are recognised by the parser and routed to the memory adapter, but the temporary backend does not implement them. `SAVE` and `RECOVER` are parsed but are not implemented in the server dispatch path. The broader project vision includes versioned storage, persistence, and recovery; do not confuse that intended scope with the current capabilities of this networking branch.
+
+## Quick start
+
+Requirements: Linux, C++20 compiler, CMake 3.20+, GoogleTest, and POSIX threads.
+
+~~~bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-```
+./build/server_test 8080
+~~~
 
-The tests use always-active `TEST_CHECK` assertions, so checks remain enabled
-in Release builds as well as Debug builds.
+In another terminal, connect with netcat:
 
-## Public API example
+~~~bash
+nc 127.0.0.1 8080
+~~~
 
-Build and run the example with:
+Try:
 
-```powershell
-cmake --build build --target SecurityEngineExample
-.\build\SecurityEngineExample.exe
-```
+~~~text
+PING
+SET greeting hello world
+GET greeting
+EXISTS greeting
+KEYS
+QUIT
+~~~
 
-The example shows an ordinary `GET`, a canary-triggered lockdown, a permitted
-`GET` during lockdown, and a denied write during lockdown. Security approval
-is not database execution: an allowed request may still fail in the Memory
-Engine.
+Press `Ctrl+C` in the server terminal for graceful process shutdown. `QUIT` closes only the client connection.
 
-## Installable CMake target
+## Documentation
 
-You can install the library and its public headers with:
+- [Build and test guide](docs/BUILD.md) — dependencies, CMake commands, tests, optional security build, troubleshooting.
+- [Server usage](docs/USAGE.md) — protocol syntax, command support, examples, response format.
+- [C++ API reference](docs/API.md) — public interfaces, constructors, methods, and important internal functions.
+- [Manual presentation runbook](docs/PRESENTATION.md) — exact terminal sequence, expected output, and explanation of the request lifecycle.
 
-```powershell
-cmake --install build --prefix install
-```
+## Optional Security_Defense integration
 
-The exported target is `oops::security_engine`. The install contains the stable
-public headers only; detector and state-manager implementation headers remain
-internal to this component.
+The normal build uses `AllowAllGuard`. To enable the adapter, configure CMake with `-DOOPS_SECURITY_DIR=/absolute/path/to/Security_Defense`. See [docs/BUILD.md](docs/BUILD.md) for the expected checkout layout and commands.
 
-## Security limitations
+## Important operational notes
 
-No trusted client authentication/authorization or privileged recovery/unlock
-mechanism is implemented. Detector thresholds are initial policy values, not
-empirically calibrated production thresholds. This component by itself does
-not guarantee append-only persistence, rollback, or data recovery. Those
-claims require the completed and tested storage and recovery modules.
+- The server currently uses a plaintext TCP protocol; it does not provide TLS or client authentication.
+- It binds to `INADDR_ANY`, meaning it listens on the machine's available network interfaces. Use it only on a trusted development network unless additional protections are added.
+- The default server port is `8080`; a custom port can be supplied as the first command-line argument.
+- The maximum request line size is 4096 bytes.
