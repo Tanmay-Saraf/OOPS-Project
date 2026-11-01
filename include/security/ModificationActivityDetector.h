@@ -14,7 +14,7 @@ class ModificationActivityDetector : public SecurityDetector {
 private:
     using Clock = std::chrono::steady_clock;
     using KeyEvent = std::pair<Clock::time_point, std::string>;
-
+    
     std::deque<Clock::time_point> modificationTimes;
     std::deque<Clock::time_point> minuteModificationTimes;
     std::deque<KeyEvent> modifiedKeyEvents;
