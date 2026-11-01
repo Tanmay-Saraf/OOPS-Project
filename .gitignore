@@ -1,0 +1,100 @@
+# Compiled C/C++ files
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.lib
+*.dll
+*.dylib
+*.exe
+*.out
+*.pdb
+
+# Project executables generated during development
+/src/network/RequestParser
+/src/network/RequestParser.exe
+
+# Build directories
+/build/
+/build-*/
+/out/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/Testing/
+
+# Test files: ignore generated files, preserve source files
+/tests/*
+!/tests/*.cpp
+!/tests/*.hpp
+!/tests/network/
+/tests/network/*
+!/tests/network/*.cpp
+!/tests/integration/
+!/tests/integration/test_security_guard_adapter.cpp
+
+# CMake-generated files
+Makefile
+CTestTestfile.cmake
+*.cmake.user
+
+# Local networking test scripts
+/test_half_close.py
+/test_server.sh
+
+# Python-generated files
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Test output and coverage
+*.gcda
+*.gcno
+*.profraw
+coverage/
+
+# Logs
+*.log
+/security.log
+
+# Debugging artifacts
+core
+core.*
+
+# Editor and IDE state
+.vscode/*
+!.vscode/tasks.json
+!.vscode/extensions.json
+.idea/
+
+# Temporary files and backups
+*.tmp
+*.swp
+*.swo
+*~
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Local Fish scripts
+*.fish
+
+# Local networking test scripts
+/test_half_close.py
+/test_server.sh
+# Memory and Storage tests
+!/tests/memory/
+/tests/memory/*
+!/tests/memory/*.cpp
+!/tests/memory/*.hpp
+!/tests/storage/
+/tests/storage/*
+!/tests/storage/*.cpp
+!/tests/storage/*.hpp
+
+# Runtime WAL and application data
+/data/

@@ -1,0 +1,712 @@
+//File Includes
+#include "network/Server.hpp"
+#include "network/RequestParser.hpp"
+#include "network/ResponseSerializer.hpp"
+#include "common/Response.hpp"
+#include "network/CompletedResponse.hpp"
+#include "network/ThreadSafeQueue.hpp"
+#include "network/ThreadPool.hpp"
+#include "network/TemporaryMemoryEngine.hpp"
+
+//C++ Header Includes
+#include <stdexcept>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <cerrno>
+#include <utility>
+#include <iostream>
+#include <algorithm>
+//System Calls Includes
+#include <sys/epoll.h>
+#include <sys/socket.h>
+#include <sys/eventfd.h>
+
+
+namespace oops{
+
+    Server::Server(int port, std::unique_ptr<RequestGuard> guard, std::unique_ptr<MemoryEngineAdapter> memory) : port_(port), guard_(std::move(guard)), memory_(std::move(memory)) {
+        if (port_ < 1 || port_ > 65535) {
+            throw std::invalid_argument("Invalid port number");
+        }
+
+        thread_pool_ = std::make_unique<ThreadPool>(4);
+
+        if(!memory_) {
+            memory_ = std::make_unique<TemporaryMemoryEngine>();
+        }
+
+        setup();
+    }
+
+    Server::~Server() = default;
+
+    void Server::setup(){
+
+        //Server Initialization
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        if(fd == -1){
+            throw std::runtime_error("Failed to create socket");
+        }
+
+        server_fd_ = UniqueFd(fd);
+
+        int reuse = 1;
+
+        if(setsockopt(server_fd_.get(), SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1) {
+            throw std::runtime_error("Failed to set SO_REUSEADDR");
+        }
+
+        struct sockaddr_in address {};
+        address.sin_family = AF_INET;
+        address.sin_port = htons(port_);
+        address.sin_addr.s_addr = htonl(INADDR_ANY);
+
+        if(bind(server_fd_.get(), (sockaddr*)&address, sizeof(address)) == -1){
+            throw std::runtime_error("Failed to bind server to ip and port");
+        }
+
+        if(listen(server_fd_.get(), 128) == -1){
+            throw std::runtime_error("Failed to start listening");
+        }
+
+        //Make it nonblocking
+        int flags = fcntl(server_fd_.get(), F_GETFL, 0);
+        if(flags == -1){
+            throw std::runtime_error("Failed to get flags");
+        }
+
+        if(fcntl(server_fd_.get(), F_SETFL, flags | O_NONBLOCK) == -1){
+            throw std::runtime_error("Failed to set non blocking");
+        }
+
+        //Epoll Setup
+        int epfd =  epoll_create1(EPOLL_CLOEXEC);
+        if(epfd == -1){
+            throw std::runtime_error("Failed to create epoll");
+        }
+
+        epoll_fd_ = UniqueFd(epfd);
+
+        response_event_fd_ = UniqueFd(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC));
+
+        if (response_event_fd_.get() == -1) {
+            throw std::runtime_error("eventfd creation failed");
+        }
+
+        epoll_event server_event{};
+        server_event.data.fd = server_fd_.get();
+        server_event.events = EPOLLIN;
+
+        if(epoll_ctl(epoll_fd_.get(), EPOLL_CTL_ADD, server_fd_.get(), &server_event) == -1){
+            throw std::runtime_error("Failed to register listening socket with epoll");
+        }
+
+        epoll_event response_event{};
+        response_event.data.fd = response_event_fd_.get();
+        response_event.events = EPOLLIN;
+
+        if(epoll_ctl(epoll_fd_.get(), EPOLL_CTL_ADD, response_event_fd_.get(), &response_event) == -1) {
+            throw std::runtime_error("Failed to register response fd with epoll");
+        }
+
+    }
+
+    void Server::acceptClients() {
+
+        while(true){
+
+            if(stopping_.load()) {
+                break;
+            }
+
+            int client_fd = accept4(server_fd_.get(), nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+
+            if(client_fd == -1){
+
+                if(errno == EINTR){
+                    continue;
+                }
+
+                if(errno == EAGAIN || errno == EWOULDBLOCK){
+                    break;
+                }
+
+                throw std::runtime_error("Failed to accept client connection");
+
+            }
+
+            UniqueFd client(client_fd);
+
+            if(stopping_.load()) {
+                break;
+            }
+
+            int client_flags = fcntl(client.get(), F_GETFL, 0);
+            if(client_flags == -1){
+                throw std::runtime_error("Could not retrieve client flags");
+            }
+
+            if(fcntl(client.get(), F_SETFL, client_flags | O_NONBLOCK) == -1){
+                throw std::runtime_error("Could not make client non blocking");
+            }
+
+            Connection conn;
+            conn.fd = std::move(client);
+            conn.generation = next_generation_++;
+            conn.client_id = ++next_client_id_;
+
+            auto state = std::make_shared<ClientRequestState>();
+            state->client_id = conn.client_id;
+            client_states_.emplace(conn.client_id, std::move(state));
+
+            epoll_event client_event{};
+            client_event.data.u64 = (static_cast<std::uint64_t>(conn.generation) << 32) | static_cast<std::uint32_t>(conn.fd.get());
+            client_event.events = EPOLLIN;
+
+            if(epoll_ctl(epoll_fd_.get(), EPOLL_CTL_ADD, conn.fd.get(), &client_event) == -1){
+                client_states_.erase(conn.client_id);
+                throw std::runtime_error("Failed to add client to epoll");
+            }
+
+            connections_.emplace(client_fd, std::move(conn));
+        }
+
+    }
+
+    void Server::handleClientEvent(const int fd){
+
+        constexpr std::size_t MAX_REQUEST_SIZE = 4096;
+        constexpr int buffer_size = 1024;
+        char buffer[buffer_size];
+        int bytes_recvd;
+
+        auto it = connections_.find(fd);
+
+        if(it == connections_.end()) return;
+
+        Connection& conn = it->second;
+
+        while(true){
+            bytes_recvd = recv(conn.fd.get(), buffer, buffer_size, 0);
+
+            if(bytes_recvd > 0){
+
+                if(conn.discarding_oversized_request) {
+                    
+                    auto newline = std::find(buffer, buffer + bytes_recvd, '\n');
+
+                    if(newline == buffer+bytes_recvd) {
+                        continue;
+                    }else {
+                        char* remaining = newline + 1;
+                        std::size_t remaining_size = (buffer + bytes_recvd) - remaining;
+                        conn.receive_buffer.append(remaining, remaining_size);
+                        conn.discarding_oversized_request = false;
+                    }
+
+                } else conn.receive_buffer.append(buffer, bytes_recvd);
+
+                size_t pos;
+                std::string &curr_receive_buffer = conn.receive_buffer;
+                while((pos = curr_receive_buffer.find('\n')) != std::string::npos){
+
+                    if(stopping_.load()) return;
+
+                    std::string cmd = curr_receive_buffer.substr(0, pos);
+                    curr_receive_buffer.erase(0, pos+1);
+                    if (!cmd.empty() && cmd.back() == '\r') {
+                        cmd.pop_back();
+                    }
+
+                    if(cmd.size() > MAX_REQUEST_SIZE) {
+                        Request request;
+                        request.command = Command::Invalid;
+                        handleRequest(request, conn.fd.get());
+                        continue;
+                    }
+
+                    Request request = parseRequest(cmd);
+
+                    handleRequest(request, conn.fd.get());
+
+                }
+
+                if(curr_receive_buffer.size() > MAX_REQUEST_SIZE) {
+                    conn.discarding_oversized_request = true;
+                    curr_receive_buffer.clear();
+
+                    Request request;
+                    request.command = Command::Invalid;
+                    handleRequest(request, conn.fd.get());
+
+                }
+
+                continue;
+            }
+
+            if(bytes_recvd == 0){
+
+                // A final request without its newline delimiter is incomplete.
+                if(!conn.receive_buffer.empty()) {
+                    Request request;
+                    request.command = Command::Invalid;
+                    handleRequest(request, fd);
+                    conn.receive_buffer.clear();
+                }
+
+                conn.peer_shutdown_write = true;
+                updateClientEvents(fd, EPOLLOUT);
+                return;
+            }
+
+            if(bytes_recvd == -1){
+                if(errno == EINTR){
+                    continue;
+                }
+                if(errno == EAGAIN || errno == EWOULDBLOCK) break;
+
+                auto client_id = conn.client_id;
+
+                int fd = conn.fd.get();
+                epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, fd, nullptr);
+                connections_.erase(fd);
+                dispatchNextRequest(client_id);
+                return;
+            }
+        }
+
+    }
+
+    void Server::run(){
+
+        constexpr int MAX_EVENTS = 64;
+        epoll_event events[MAX_EVENTS];
+
+        while(!stopping_.load() || outstanding_requests_.load() > 0 || !checkAllClientBuffersEmpty()){
+
+            int active = epoll_wait(epoll_fd_.get(), events, MAX_EVENTS, -1);
+
+            if(active == -1 && errno == EINTR){
+                continue;
+            }
+
+            if(active == -1){
+                throw std::runtime_error("Epoll wait failed");
+            }
+
+            for(int i = 0; i<active; i++){
+
+                std::uint64_t token = events[i].data.u64;
+
+                int event_fd = static_cast<int>(token & 0xFFFFFFFFULL);
+                std::uint32_t generation = static_cast<std::uint32_t>(token >> 32);
+
+
+                if(event_fd == server_fd_.get()){
+                    if(!stopping_.load()) acceptClients();
+                } else if(event_fd == response_event_fd_.get()) {
+
+                    std::uint64_t notifications = 0;
+
+                    ssize_t bytes_read = read(response_event_fd_.get(), &notifications, sizeof(notifications));
+                    if (bytes_read == -1) {
+                        if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                            throw std::runtime_error("Failed to read response eventfd");
+                        }
+                    }
+
+                    CompletedResponse completed;
+
+                    while(completed_responses_.tryPop(completed)) {
+
+                        if(completed.request_finished){
+
+                            auto state_it = client_states_.find(completed.client_id);
+
+                                if(state_it != client_states_.end()) {
+                                    state_it->second->request_processing = false;
+                                    if(completed.command == Command::Quit && completed.response.status == ResponseStatus::Success) {
+
+                                        while(!state_it->second->pending_requests.empty()) {
+                                            state_it->second->pending_requests.pop();
+                                        }
+
+                                        auto conn_it = std::find_if(connections_.begin(), connections_.end(), [&completed](const auto& entry) {
+                                                return entry.second.client_id == completed.client_id;
+                                            }
+                                        );
+
+                                        if(conn_it == connections_.end()) {
+                                            client_states_.erase(state_it);
+                                        }
+
+                                    } else {
+                                        dispatchNextRequest(completed.client_id);
+                                    }
+                                }
+                            outstanding_requests_.fetch_sub(1);
+
+                        }
+
+                        auto it = connections_.find(completed.client_fd);
+
+                        if(it == connections_.end()) continue;
+
+                        if(completed.generation != it->second.generation) continue;
+
+                        if(completed.command == Command::Quit && completed.response.status == ResponseStatus::Success) {
+                            it->second.close_after_write = true;
+                        }
+
+                        it->second.send_buffer.append(serializeResponse(completed.response));
+                        
+                        std::uint32_t flags = EPOLLOUT;
+                        if(!it->second.peer_shutdown_write) {
+                            flags |= EPOLLIN;
+                        }
+
+                        updateClientEvents(completed.client_fd, flags);
+
+                    }
+
+                }
+                else {
+                    auto it = connections_.find(event_fd);
+                    if(it == connections_.end()) continue;
+                    Connection &conn = it->second;
+                    if(conn.generation != generation) continue;
+                    if(events[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) handleClientEvent(event_fd);
+                    if(events[i].events & EPOLLOUT) handleWriteEvent(event_fd);
+                }
+
+            }
+
+        }
+    }
+
+        void Server::handleRequest(const Request& request, int client_fd) {
+
+            auto it = connections_.find(client_fd);
+            if(it == connections_.end()) return;
+
+            Connection& conn = it->second;
+
+            auto state_it = client_states_.find(conn.client_id);
+            if (state_it == client_states_.end()) return;
+
+            auto& state = *state_it->second;
+
+            if(state.quit_requested) return;
+
+            state.pending_requests.push(request);
+            outstanding_requests_.fetch_add(1);
+
+            if(request.command == Command::Quit) state.quit_requested = true;
+            
+            dispatchNextRequest(conn.client_id);
+
+        }
+
+    void Server::dispatchNextRequest(std::uint64_t client_id) {
+        
+        auto it = client_states_.find(client_id);
+
+        if(it == client_states_.end()) return;
+
+        auto& state = *it->second;
+
+        if(state.request_processing) return;
+
+        auto conn_it = std::find_if(connections_.begin(), connections_.end(), [client_id](const auto& entry) {
+            return entry.second.client_id == client_id;
+        });
+
+        if(state.pending_requests.empty()) {
+
+            if(conn_it == connections_.end()) {
+                client_states_.erase(it);
+            }
+
+            return;
+        }
+
+        Request request = state.pending_requests.front();
+        state.pending_requests.pop();
+
+        state.request_processing = true;
+        auto state_ptr = it->second;
+
+        int client_fd = -1;
+        std::uint64_t generation = 0;
+
+        if(conn_it != connections_.end()) {
+            client_fd = conn_it->first;
+            generation = conn_it->second.generation;
+        }
+
+        try {
+            thread_pool_->enqueue([this, request, client_id, state_ptr, client_fd, generation] () {
+
+                Response response;
+
+                try {
+
+                    if(request.command == Command::Invalid) {
+                        response.status = ResponseStatus::InvalidRequest;
+                        response.message = "Invalid request";
+                    }else {
+
+                        GuardDecision decision;
+                        decision.allowed = true;
+
+                        if(request.command != Command::Ping && request.command != Command::Quit) decision = guard_->check(request);
+
+                        if(!decision.allowed) {
+
+                            response.message = decision.reason;
+                            response.status = ResponseStatus::PermissionDenied;
+
+                        }else {
+
+                            switch(request.command) {
+
+                                case Command::Ping: {
+                                    response.status = ResponseStatus::Success;
+                                    response.message = "PONG";
+                                    break;
+                                }
+                                case Command::Quit: {
+                                    response.status = ResponseStatus::Success;
+                                    response.message = "BYE";
+                                    break;
+                                }
+                                case Command::Status: {
+
+                                    response.status = ResponseStatus::Success;
+                                    response.value = decision.state.empty() ? "UNKNOWN" : decision.state;
+                                    break;
+
+                                }
+                                case Command::Set:
+                                case Command::Get:
+                                case Command::Delete:
+                                case Command::Exists:
+                                case Command::History:
+                                case Command::GetVersion:
+                                case Command::Keys:{
+                                    response = memory_->execute(request);
+                                    break;
+                                }
+                                default: {
+                                    response.status = ResponseStatus::InternalError;
+                                    response.message = "Request processing not implemented";
+                                    break;
+                                }
+
+                            }
+
+                        }
+
+                    }
+
+
+                }catch(const std::exception& e) {
+                    response.status = ResponseStatus::InternalError;
+                    response.message = std::string("Some error occured:- ") + e.what();
+                }catch(...) {
+                    response.status = ResponseStatus::InternalError;
+                    response.message = "Unknown error occured while processing";
+                }
+
+                CompletedResponse completedResponse;
+                completedResponse.client_fd = client_fd;
+                completedResponse.generation = generation;
+                completedResponse.response = response;
+                completedResponse.client_id = client_id;
+                completedResponse.request_finished = true;
+                completedResponse.command = request.command;
+
+                publishResponse(std::move(completedResponse));
+
+            });
+        } catch(const std::exception &e) {
+            std::cerr << "Failed to enqueue request: " << e.what() << '\n'; 
+            throw;
+        }
+
+    }
+
+    void Server::handleWriteEvent(int fd) {
+
+        auto it = connections_.find(fd);
+
+        if (it == connections_.end()) {
+            return;
+        }
+
+        Connection& conn = it->second;
+        std::string &send_buffer = conn.send_buffer;
+        ssize_t sent_bytes;
+
+        while(true){
+
+            if(send_buffer.empty()) {
+
+                int conn_fd = conn.fd.get();
+
+                if(conn.close_after_write) {
+
+                    const auto client_id = conn.client_id;
+
+                    epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn_fd, nullptr);
+                    connections_.erase(conn_fd);
+
+                    auto state_it = client_states_.find(client_id);
+
+                    if(state_it != client_states_.end() &&
+                        !state_it->second->request_processing &&
+                        state_it->second->pending_requests.empty()) {
+                        client_states_.erase(state_it);
+                    }
+
+                    return;
+                }
+
+                if(conn.peer_shutdown_write) {
+                    auto state_it = client_states_.find(conn.client_id);
+
+                    if(state_it == client_states_.end() ||
+                    (!state_it->second->request_processing &&
+                        state_it->second->pending_requests.empty())) {
+                        epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn_fd, nullptr);
+                        if (state_it != client_states_.end()) {
+                            client_states_.erase(state_it);
+                        }
+                        connections_.erase(conn_fd);
+                        return;
+                    }
+
+                    // Requests are still outstanding; wait for their responses.
+                    updateClientEvents(conn_fd, 0);
+                    break;
+                }
+
+                updateClientEvents(conn_fd, EPOLLIN);
+                break;
+            }
+            sent_bytes = send(conn.fd.get(), send_buffer.data(), send_buffer.size(), MSG_NOSIGNAL);
+
+            if(sent_bytes > 0) {
+                send_buffer.erase(0, sent_bytes);
+                continue;
+            } else if(sent_bytes == 0) {
+
+                const auto client_id = conn.client_id;
+                epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, conn.fd.get(), nullptr);
+                connections_.erase(conn.fd.get());
+                dispatchNextRequest(client_id);
+                return;
+            }
+            else if(sent_bytes == -1) {
+
+                if(errno == EINTR){
+                    continue;
+                }
+                if(errno == EAGAIN || errno == EWOULDBLOCK) break;
+
+
+                const auto client_id = conn.client_id;
+
+                int fd = conn.fd.get();
+                epoll_ctl(epoll_fd_.get(), EPOLL_CTL_DEL, fd, nullptr);
+                connections_.erase(fd);
+                dispatchNextRequest(client_id);
+                return;
+            }
+
+        }
+
+    }
+
+    void Server::updateClientEvents(int fd, std::uint32_t flags){
+
+        auto it = connections_.find(fd);
+
+        if(it == connections_.end()) return;
+
+        Connection &conn = it->second;
+
+        epoll_event event{};
+        event.data.u64 = static_cast<uint64_t>(conn.generation)<<32 | static_cast<uint32_t>(conn.fd.get());
+        event.events = flags;
+
+        if(epoll_ctl(epoll_fd_.get(), EPOLL_CTL_MOD, fd, &event) == -1){
+            throw std::runtime_error("Modifying Client Events failed");
+        }
+
+    }
+
+    void Server::publishResponse(CompletedResponse completedResponse) {
+
+        completed_responses_.push(std::move(completedResponse));
+        const std::uint64_t notification = 1;
+        ssize_t bytes_written;
+
+        while(true) {
+            bytes_written = write(response_event_fd_.get(), &notification, sizeof(notification));
+            
+            if(bytes_written == static_cast<ssize_t>(sizeof(notification))) break;
+
+            if(bytes_written == -1){
+                if(errno == EINTR) continue;
+                if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // eventfd is already readable, a notification is pending.
+                    break;
+                }
+            } 
+            
+            throw std::runtime_error("Error while updating notification");
+
+        }
+
+    }
+
+    void Server::requestShutdown() {
+
+        stopping_.store(true);
+
+        std::uint64_t notification = 1;
+
+        ssize_t written_bytes;
+
+        while(true) {
+
+            written_bytes = write(response_event_fd_.get(), &notification, sizeof(notification));
+
+            if(written_bytes == sizeof(notification)) return;
+
+            if(written_bytes == -1) {
+
+                if(errno == EINTR) continue;
+                if(errno == EAGAIN || errno == EWOULDBLOCK) return;
+                throw std::runtime_error("Failed to notify event loop during shutdown");
+
+            }
+
+        }
+
+    }
+
+    bool Server::checkAllClientBuffersEmpty() const{
+
+        for(auto it = connections_.begin(); it != connections_.end(); it++) {
+            if(!it->second.send_buffer.empty()) return false;
+        }
+
+        return true;
+
+    }
+
+}
