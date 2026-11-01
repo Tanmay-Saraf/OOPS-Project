@@ -105,6 +105,22 @@ int main() {
         assert(get_value(live_engine, "colour").value == "blue");
         assert(get_value(live_engine, "temporary").status == ResponseStatus::NotFound);
 
+        MemoryEngine restarted_engine;
+
+        auto restart_report = recovery.recover(
+            wal_path.string(),
+            storage::make_memory_replay_handler(restarted_engine)
+        );
+
+        assert(restart_report.fully_recovered());
+
+        assert(get_value(restarted_engine, "colour").value == "blue");
+
+        assert(
+            get_value(restarted_engine, "temporary").status
+            == ResponseStatus::NotFound
+        );
+
         // The writer remains usable after log replacement and replay advances the ID.
         response = set_value(live_engine, "after_rollback", "works");
         assert(response.status == ResponseStatus::Success);
