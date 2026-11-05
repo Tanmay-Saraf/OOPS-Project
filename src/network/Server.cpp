@@ -26,7 +26,7 @@
 
 namespace oops{
 
-    Server::Server(int port, std::unique_ptr<RequestGuard> guard, std::unique_ptr<MemoryEngineAdapter> memory, RollbackHandler rollback_handler_, RecoverHandler recover_handler) : port_(port), guard_(std::move(guard)), memory_(std::move(memory)), rollback_handler_(std::move(rollback_handler_)), recover_handler_(std::move(recover_handler)) {
+    Server::Server(int port, std::unique_ptr<RequestGuard> guard, std::unique_ptr<MemoryEngineAdapter> memory, RollbackHandler rollback_handler_, RecoverHandler recover_handler, ReplayHandler replay_handler) : port_(port), guard_(std::move(guard)), memory_(std::move(memory)), rollback_handler_(std::move(rollback_handler_)), recover_handler_(std::move(recover_handler)), replay_handler_(std::move(replay_handler)) {
         if (port_ < 1 || port_ > 65535) {
             throw std::invalid_argument("Invalid port number");
         }
@@ -543,7 +543,8 @@ namespace oops{
                             request.command == Command::Status ||
                             request.command == Command::Save ||
                             request.command == Command::Recover ||
-                            request.command == Command::Rollback ;
+                            request.command == Command::Rollback ||
+                            request.command == Command::Replay;
 
                         // 6. Check role BEFORE calling Security Engine
                         if (adminOnly && state_ptr->role != UserRole::Admin) {
@@ -561,7 +562,8 @@ namespace oops{
                             if (request.command != Command::Ping &&
                                 request.command != Command::Quit && 
                                 request.command != Command::Rollback &&
-                                request.command != Command::Recover) {
+                                request.command != Command::Recover && 
+                                request.command != Command::Replay) {
 
                                 decision = guard_->check(request);
 
@@ -625,6 +627,24 @@ namespace oops{
                                         } else {
                                             response.status = ResponseStatus::InternalError;
                                             response.message = "Database recovery failed";
+                                        }
+
+                                        break;
+                                    }
+
+                                    case Command::Replay: {
+                                        if (!replay_handler_) {
+                                            response.status = ResponseStatus::InternalError;
+                                            response.message = "Replay handler unavailable";
+                                            break;
+                                        }
+
+                                        if (replay_handler_(request.timestamp)) {
+                                            response.status = ResponseStatus::Success;
+                                            response.message = "Historical state replayed successfully";
+                                        } else {
+                                            response.status = ResponseStatus::InternalError;
+                                            response.message = "Historical replay failed";
                                         }
 
                                         break;

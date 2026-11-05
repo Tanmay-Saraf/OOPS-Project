@@ -142,6 +142,28 @@ Request parseRequest(const std::string& line) {
         request.command = Command::Rollback;
     }
 
+    else if (command == "REPLAY") {
+        std::string timestampText;
+
+        if (!(input >> timestampText) || hasExtraArgument()) {
+            return request;
+        }
+
+        std::uint64_t timestamp = 0;
+
+        const char* begin = timestampText.data();
+        const char* end = begin + timestampText.size();
+
+        auto [ptr, ec] = std::from_chars(begin, end, timestamp);
+
+        if (ec != std::errc{} || ptr != end || timestamp == 0) {
+            return request;
+        }
+
+        request.timestamp = timestamp;
+        request.command = Command::Replay;
+    }
+
     // Commands without arguments
     else if (command == "KEYS" ||
              command == "PING" ||

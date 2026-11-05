@@ -29,12 +29,14 @@ namespace oops {
         
         using RollbackHandler = std::function<bool(std::uint64_t)>;
         using RecoverHandler = std::function<bool()>;
+        using ReplayHandler = std::function<bool(std::uint64_t)>;
 
         explicit Server(int port, 
-            std::unique_ptr<RequestGuard> guard = std::make_unique<AllowAllGuard>(), 
+            std::unique_ptr<RequestGuard> guard, 
             std::unique_ptr<MemoryEngineAdapter> memory = nullptr,
             RollbackHandler rollback_handler = nullptr,
-            RecoverHandler recover_handler = nullptr
+            RecoverHandler recover_handler = nullptr,
+            ReplayHandler replay_handler = nullptr
         );
 
         Server(const Server&) = delete;
@@ -53,6 +55,7 @@ namespace oops {
         RollbackHandler rollback_handler_;
         RecoverHandler recover_handler_;
         std::mutex request_execution_mutex_;
+        ReplayHandler replay_handler_;
 
         std::atomic<std::uint64_t> outstanding_requests_{0};
         std::atomic<bool> stopping_{false};

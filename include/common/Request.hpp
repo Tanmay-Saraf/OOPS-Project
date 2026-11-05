@@ -21,6 +21,7 @@ enum class Command {
     Login,
     Logout,
     Rollback,
+    Replay,
     Invalid
 };
 

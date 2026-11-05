@@ -171,29 +171,55 @@ int main(int argc, char* argv[]) {
         
         auto recover_handler = [&, memory_engine_ptr]() {
 
-        // Validate the WAL before clearing the current database.
-        const auto validation_report = recovery_manager.recover(
-            wal_path,
-            [](const storage::WalRecord&) {
-                return true;
+            // Validate the WAL before clearing the current database.
+            const auto validation_report = recovery_manager.recover(
+                wal_path,
+                [](const storage::WalRecord&) {
+                    return true;
+                }
+            );
+
+            if (!validation_report.fully_recovered()) {
+                return false;
             }
-        );
 
-        if (!validation_report.fully_recovered()) {
-            return false;
-        }
+            // Clear current in-memory state.
+            memory_engine_ptr->clear();
 
-        // Clear current in-memory state.
-        memory_engine_ptr->clear();
+            // Replay the entire WAL.
+            const auto report = recovery_manager.recover(
+                wal_path,
+                storage::make_memory_replay_handler(*memory_engine_ptr)
+            );
 
-        // Replay the entire WAL.
-        const auto report = recovery_manager.recover(
-            wal_path,
-            storage::make_memory_replay_handler(*memory_engine_ptr)
-        );
+            return report.fully_recovered();
+        };
 
-        return report.fully_recovered();
-    };
+        auto replay_handler =
+            [&, memory_engine_ptr](std::uint64_t timestamp) {
+
+                // Validate WAL before clearing the current memory state.
+                const auto validation = recovery_manager.recover(
+                    wal_path,
+                    [](const storage::WalRecord&) { return true; },
+                    timestamp
+                );
+
+                if (!validation.fully_recovered()) {
+                    return false;
+                }
+
+                // Rebuild memory using only records up to the target timestamp.
+                storage::make_memory_clear_handler(*memory_engine_ptr)();
+
+                const auto report = recovery_manager.recover(
+                    wal_path,
+                    storage::make_memory_replay_handler(*memory_engine_ptr),
+                    timestamp
+                );
+
+                return report.fully_recovered();
+            };
 
         // ----------------------------------------------------
         // 6. Initialize Server with Security + Memory
@@ -205,7 +231,8 @@ int main(int argc, char* argv[]) {
             std::make_unique<oops::SecurityGuardAdapter>(),
             std::move(memory_engine),
             rollback_handler,
-            recover_handler
+            recover_handler,
+            replay_handler
         );
 #else
         oops::Server server(
@@ -213,7 +240,8 @@ int main(int argc, char* argv[]) {
             std::make_unique<oops::AllowAllGuard>(),
             std::move(memory_engine),
             rollback_handler,
-            recover_handler
+            recover_handler,
+            replay_handler
         );
 #endif
 
