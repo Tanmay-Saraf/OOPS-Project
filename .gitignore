@@ -98,3 +98,6 @@ Thumbs.db
 
 # Runtime WAL and application data
 /data/
+
+/run-server
+/tools/

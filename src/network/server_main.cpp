@@ -25,6 +25,7 @@
 #include <system_error>
 #include <thread>
 #include <time.h>
+#include <cstdint>
 
 namespace {
 
@@ -36,7 +37,9 @@ int parsePort(const char* text) {
     const auto [ptr, error] = std::from_chars(begin, end, port);
 
     if (error != std::errc{} || ptr != end || port < 1 || port > 65535) {
-        throw std::invalid_argument("port must be an integer between 1 and 65535");
+        throw std::invalid_argument(
+            "port must be an integer between 1 and 65535"
+        );
     }
 
     return port;
@@ -99,8 +102,7 @@ int main(int argc, char* argv[]) {
 
         std::filesystem::create_directories("data");
 
-        // Declare the writer before the Memory Engine.
-        // It must outlive the engine's WAL callback.
+        // Writer must outlive MemoryEngine's WAL callback.
         storage::WalWriter wal_writer(wal_path);
 
         // ----------------------------------------------------
@@ -110,7 +112,7 @@ int main(int argc, char* argv[]) {
         auto memory_engine = std::make_unique<oops::MemoryEngine>();
 
         // ----------------------------------------------------
-        // 3. Recover memory from the existing WAL
+        // 3. Recover memory from existing WAL
         // ----------------------------------------------------
 
         storage::RecoveryManager recovery_manager;
@@ -148,25 +150,47 @@ int main(int argc, char* argv[]) {
         );
 
         // ----------------------------------------------------
-        // 5. Initialize Server with Security + Memory
+        // 5. Create rollback handler
+        // ----------------------------------------------------
+
+        // Preserve a pointer before moving ownership into Server.
+        auto* memory_engine_ptr = memory_engine.get();
+
+        auto rollback_handler =
+            [&, memory_engine_ptr](std::uint64_t timestamp) {
+
+                const auto report = recovery_manager.rollback_to(
+                    wal_writer,
+                    storage::make_memory_clear_handler(*memory_engine_ptr),
+                    storage::make_memory_replay_handler(*memory_engine_ptr),
+                    timestamp
+                );
+
+                return report.fully_recovered();
+            };
+
+        // ----------------------------------------------------
+        // 6. Initialize Server with Security + Memory
         // ----------------------------------------------------
 
 #ifdef OOPS_WITH_SECURITY
         oops::Server server(
             port,
             std::make_unique<oops::SecurityGuardAdapter>(),
-            std::move(memory_engine)
+            std::move(memory_engine),
+            rollback_handler
         );
 #else
         oops::Server server(
             port,
             std::make_unique<oops::AllowAllGuard>(),
-            std::move(memory_engine)
+            std::move(memory_engine),
+            rollback_handler
         );
 #endif
 
         // ----------------------------------------------------
-        // 6. Run Server
+        // 7. Run Server
         // ----------------------------------------------------
 
         std::exception_ptr server_error;

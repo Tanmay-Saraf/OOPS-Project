@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <memory>
 #include <atomic>
+#include <functional>
+#include <cstdint>
 
 #include <sys/epoll.h>
 
@@ -23,10 +25,11 @@ namespace oops {
 
     class Server {
     public:
-    
+        using RollbackHandler = std::function<bool(std::uint64_t)>;
         explicit Server(int port, 
             std::unique_ptr<RequestGuard> guard = std::make_unique<AllowAllGuard>(), 
-            std::unique_ptr<MemoryEngineAdapter> memory = nullptr
+            std::unique_ptr<MemoryEngineAdapter> memory = nullptr,
+            RollbackHandler rollback_handler = nullptr
         );
 
         Server(const Server&) = delete;
@@ -54,6 +57,7 @@ namespace oops {
         std::unique_ptr<MemoryEngineAdapter> memory_;
         ThreadSafeQueue<CompletedResponse> completed_responses_;
         std::unique_ptr<ThreadPool> thread_pool_;
+        RollbackHandler rollback_handler_;
 
         void setup();
         void acceptClients();

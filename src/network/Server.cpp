@@ -18,15 +18,15 @@
 #include <utility>
 #include <iostream>
 #include <algorithm>
+#include <functional>
 //System Calls Includes
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/eventfd.h>
 
-
 namespace oops{
 
-    Server::Server(int port, std::unique_ptr<RequestGuard> guard, std::unique_ptr<MemoryEngineAdapter> memory) : port_(port), guard_(std::move(guard)), memory_(std::move(memory)) {
+    Server::Server(int port, std::unique_ptr<RequestGuard> guard, std::unique_ptr<MemoryEngineAdapter> memory, RollbackHandler rollback_handler_) : port_(port), guard_(std::move(guard)), memory_(std::move(memory)), rollback_handler_(std::move(rollback_handler_)) {
         if (port_ < 1 || port_ > 65535) {
             throw std::invalid_argument("Invalid port number");
         }
@@ -447,62 +447,203 @@ namespace oops{
         }
 
         try {
-            thread_pool_->enqueue([this, request, client_id, state_ptr, client_fd, generation] () {
+            thread_pool_->enqueue([this, request, client_id, state_ptr, client_fd, generation]() {
 
                 Response response;
 
                 try {
 
-                    if(request.command == Command::Invalid) {
+                    // 1. Reject invalid requests
+                    if (request.command == Command::Invalid) {
+
                         response.status = ResponseStatus::InvalidRequest;
                         response.message = "Invalid request";
-                    }else {
 
-                        GuardDecision decision;
-                        decision.allowed = true;
+                    }
 
-                        if(request.command != Command::Ping && request.command != Command::Quit) decision = guard_->check(request);
+                    // 2. LOGIN
+                    else if (request.command == Command::Login) {
 
-                        if(!decision.allowed) {
+                        if (state_ptr->authenticated) {
 
-                            response.message = decision.reason;
                             response.status = ResponseStatus::PermissionDenied;
+                            response.message = "Already logged in";
 
-                        }else {
+                        }
+                        else if (request.username == "admin" &&
+                                request.password == "admin123") {
 
-                            switch(request.command) {
+                            state_ptr->authenticated = true;
+                            state_ptr->role = UserRole::Admin;
+                            state_ptr->username = "admin";
 
-                                case Command::Ping: {
-                                    response.status = ResponseStatus::Success;
-                                    response.message = "PONG";
-                                    break;
-                                }
-                                case Command::Quit: {
-                                    response.status = ResponseStatus::Success;
-                                    response.message = "BYE";
-                                    break;
-                                }
-                                case Command::Status: {
+                            response.status = ResponseStatus::Success;
+                            response.message = "Logged in as ADMIN";
 
-                                    response.status = ResponseStatus::Success;
-                                    response.value = decision.state.empty() ? "UNKNOWN" : decision.state;
-                                    break;
+                        }
+                        else if (request.username == "user" &&
+                                request.password == "user123") {
 
-                                }
-                                case Command::Set:
-                                case Command::Get:
-                                case Command::Delete:
-                                case Command::Exists:
-                                case Command::History:
-                                case Command::GetVersion:
-                                case Command::Keys:{
-                                    response = memory_->execute(request);
-                                    break;
-                                }
-                                default: {
-                                    response.status = ResponseStatus::InternalError;
-                                    response.message = "Request processing not implemented";
-                                    break;
+                            state_ptr->authenticated = true;
+                            state_ptr->role = UserRole::User;
+                            state_ptr->username = "user";
+
+                            response.status = ResponseStatus::Success;
+                            response.message = "Logged in as USER";
+
+                        }
+                        else {
+
+                            response.status = ResponseStatus::PermissionDenied;
+                            response.message = "Invalid username or password";
+
+                        }
+
+                    }
+
+                    // 3. LOGOUT
+                    else if (request.command == Command::Logout) {
+
+                        if (!state_ptr->authenticated) {
+
+                            response.status = ResponseStatus::PermissionDenied;
+                            response.message = "Not logged in";
+
+                        }
+                        else {
+
+                            state_ptr->authenticated = false;
+                            state_ptr->role = UserRole::User;
+                            state_ptr->username.clear();
+
+                            response.status = ResponseStatus::Success;
+                            response.message = "Logged out";
+
+                        }
+
+                    }
+
+                    // 4. Require login for database commands
+                    else if (request.command != Command::Ping &&
+                            request.command != Command::Quit &&
+                            !state_ptr->authenticated) {
+
+                        response.status = ResponseStatus::PermissionDenied;
+                        response.message = "Please login first";
+
+                    }
+
+                    else {
+
+                        // 5. Identify administrator-only commands
+                        const bool adminOnly =
+                            request.command == Command::Status ||
+                            request.command == Command::Save ||
+                            request.command == Command::Recover ||
+                            request.command == Command::Rollback ;
+
+                        // 6. Check role BEFORE calling Security Engine
+                        if (adminOnly && state_ptr->role != UserRole::Admin) {
+
+                            response.status = ResponseStatus::PermissionDenied;
+                            response.message = "Admin privileges required";
+
+                        }
+                        else {
+
+                            GuardDecision decision;
+                            decision.allowed = true;
+
+                            // 7. Security Engine check
+                            if (request.command != Command::Ping &&
+                                request.command != Command::Quit && 
+                                request.command != Command::Rollback) {
+
+                                decision = guard_->check(request);
+
+                            }
+
+                            if (!decision.allowed) {
+
+                                response.message = decision.reason;
+                                response.status = ResponseStatus::PermissionDenied;
+
+                            }
+                            else {
+
+                                // 8. Execute the command
+                                switch (request.command) {
+
+                                    case Command::Ping: {
+
+                                        response.status = ResponseStatus::Success;
+                                        response.message = "PONG";
+                                        break;
+
+                                    }
+
+                                    case Command::Quit: {
+
+                                        response.status = ResponseStatus::Success;
+                                        response.message = "BYE";
+                                        break;
+
+                                    }
+
+                                    case Command::Login:
+                                    case Command::Logout: {
+                                        // Already handled above
+                                        break;
+                                    }
+
+                                    case Command::Status: {
+
+                                        response.status = ResponseStatus::Success;
+                                        response.value = decision.state.empty()
+                                            ? "UNKNOWN"
+                                            : decision.state;
+
+                                        break;
+
+                                    }
+
+                                    case Command::Set:
+                                    case Command::Get:
+                                    case Command::Delete:
+                                    case Command::Exists:
+                                    case Command::History:
+                                    case Command::GetVersion:
+                                    case Command::Keys: {
+
+                                        response = memory_->execute(request);
+                                        break;
+
+                                    }
+                                    case Command::Rollback: {
+                                        if (!rollback_handler_) {
+                                            response.status = ResponseStatus::InternalError;
+                                            response.message = "Rollback handler unavailable";
+                                            break;
+                                        }
+
+                                        if (rollback_handler_(request.timestamp)) {
+                                            response.status = ResponseStatus::Success;
+                                            response.message = "Rollback completed successfully";
+                                        } else {
+                                            response.status = ResponseStatus::InternalError;
+                                            response.message = "Rollback failed";
+                                        }
+
+                                        break;
+                                    }
+                                    default: {
+
+                                        response.status = ResponseStatus::InternalError;
+                                        response.message = "Request processing not implemented";
+                                        break;
+
+                                    }
+
                                 }
 
                             }
@@ -511,16 +652,23 @@ namespace oops{
 
                     }
 
+                }
+                catch (const std::exception& e) {
 
-                }catch(const std::exception& e) {
                     response.status = ResponseStatus::InternalError;
                     response.message = std::string("Some error occured:- ") + e.what();
-                }catch(...) {
+
+                }
+                catch (...) {
+
                     response.status = ResponseStatus::InternalError;
                     response.message = "Unknown error occured while processing";
+
                 }
 
+                // 9. Publish response back to the event loop
                 CompletedResponse completedResponse;
+
                 completedResponse.client_fd = client_fd;
                 completedResponse.generation = generation;
                 completedResponse.response = response;
@@ -531,9 +679,13 @@ namespace oops{
                 publishResponse(std::move(completedResponse));
 
             });
-        } catch(const std::exception &e) {
-            std::cerr << "Failed to enqueue request: " << e.what() << '\n'; 
+
+        }
+        catch (const std::exception& e) {
+
+            std::cerr << "Failed to enqueue request: " << e.what() << '\n';
             throw;
+
         }
 
     }

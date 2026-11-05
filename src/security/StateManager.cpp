@@ -20,4 +20,9 @@ void StateManager::enterLockdown() {
     currentState = SecurityState::LOCKDOWN;
 }
 
+void StateManager::unlock() {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    currentState = SecurityState::RUNNING;
+}
+
 }

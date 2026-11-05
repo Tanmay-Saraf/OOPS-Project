@@ -23,6 +23,7 @@ public:
     // transition back to RUNNING; recovery needs a trusted future API.
     void markSuspected();
     void enterLockdown();
+    void unlock();
 };
 
 }
