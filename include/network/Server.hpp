@@ -16,6 +16,7 @@
 #include <atomic>
 #include <functional>
 #include <cstdint>
+#include <mutex>
 
 #include <sys/epoll.h>
 
@@ -25,11 +26,15 @@ namespace oops {
 
     class Server {
     public:
+        
         using RollbackHandler = std::function<bool(std::uint64_t)>;
+        using RecoverHandler = std::function<bool()>;
+
         explicit Server(int port, 
             std::unique_ptr<RequestGuard> guard = std::make_unique<AllowAllGuard>(), 
             std::unique_ptr<MemoryEngineAdapter> memory = nullptr,
-            RollbackHandler rollback_handler = nullptr
+            RollbackHandler rollback_handler = nullptr,
+            RecoverHandler recover_handler = nullptr
         );
 
         Server(const Server&) = delete;
@@ -45,6 +50,9 @@ namespace oops {
         std::unordered_map<int, Connection> connections_;
         std::uint64_t next_client_id_ = 0;
         std::unordered_map<std::uint64_t, std::shared_ptr<ClientRequestState>> client_states_;
+        RollbackHandler rollback_handler_;
+        RecoverHandler recover_handler_;
+        std::mutex request_execution_mutex_;
 
         std::atomic<std::uint64_t> outstanding_requests_{0};
         std::atomic<bool> stopping_{false};
@@ -57,7 +65,6 @@ namespace oops {
         std::unique_ptr<MemoryEngineAdapter> memory_;
         ThreadSafeQueue<CompletedResponse> completed_responses_;
         std::unique_ptr<ThreadPool> thread_pool_;
-        RollbackHandler rollback_handler_;
 
         void setup();
         void acceptClients();

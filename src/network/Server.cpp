@@ -26,7 +26,7 @@
 
 namespace oops{
 
-    Server::Server(int port, std::unique_ptr<RequestGuard> guard, std::unique_ptr<MemoryEngineAdapter> memory, RollbackHandler rollback_handler_) : port_(port), guard_(std::move(guard)), memory_(std::move(memory)), rollback_handler_(std::move(rollback_handler_)) {
+    Server::Server(int port, std::unique_ptr<RequestGuard> guard, std::unique_ptr<MemoryEngineAdapter> memory, RollbackHandler rollback_handler_, RecoverHandler recover_handler) : port_(port), guard_(std::move(guard)), memory_(std::move(memory)), rollback_handler_(std::move(rollback_handler_)), recover_handler_(std::move(recover_handler)) {
         if (port_ < 1 || port_ > 65535) {
             throw std::invalid_argument("Invalid port number");
         }
@@ -449,6 +449,9 @@ namespace oops{
         try {
             thread_pool_->enqueue([this, request, client_id, state_ptr, client_fd, generation]() {
 
+
+                std::lock_guard<std::mutex> execution_lock(request_execution_mutex_);
+
                 Response response;
 
                 try {
@@ -557,7 +560,8 @@ namespace oops{
                             // 7. Security Engine check
                             if (request.command != Command::Ping &&
                                 request.command != Command::Quit && 
-                                request.command != Command::Rollback) {
+                                request.command != Command::Rollback &&
+                                request.command != Command::Recover) {
 
                                 decision = guard_->check(request);
 
@@ -605,6 +609,25 @@ namespace oops{
 
                                         break;
 
+                                    }
+
+                                    case Command::Recover: {
+
+                                        if (!recover_handler_) {
+                                            response.status = ResponseStatus::InternalError;
+                                            response.message = "Recovery handler unavailable";
+                                            break;
+                                        }
+
+                                        if (recover_handler_()) {
+                                            response.status = ResponseStatus::Success;
+                                            response.message = "Database recovered successfully from WAL";
+                                        } else {
+                                            response.status = ResponseStatus::InternalError;
+                                            response.message = "Database recovery failed";
+                                        }
+
+                                        break;
                                     }
 
                                     case Command::Set:

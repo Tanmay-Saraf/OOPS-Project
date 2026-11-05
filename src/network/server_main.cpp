@@ -168,6 +168,32 @@ int main(int argc, char* argv[]) {
 
                 return report.fully_recovered();
             };
+        
+        auto recover_handler = [&, memory_engine_ptr]() {
+
+        // Validate the WAL before clearing the current database.
+        const auto validation_report = recovery_manager.recover(
+            wal_path,
+            [](const storage::WalRecord&) {
+                return true;
+            }
+        );
+
+        if (!validation_report.fully_recovered()) {
+            return false;
+        }
+
+        // Clear current in-memory state.
+        memory_engine_ptr->clear();
+
+        // Replay the entire WAL.
+        const auto report = recovery_manager.recover(
+            wal_path,
+            storage::make_memory_replay_handler(*memory_engine_ptr)
+        );
+
+        return report.fully_recovered();
+    };
 
         // ----------------------------------------------------
         // 6. Initialize Server with Security + Memory
@@ -178,14 +204,16 @@ int main(int argc, char* argv[]) {
             port,
             std::make_unique<oops::SecurityGuardAdapter>(),
             std::move(memory_engine),
-            rollback_handler
+            rollback_handler,
+            recover_handler
         );
 #else
         oops::Server server(
             port,
             std::make_unique<oops::AllowAllGuard>(),
             std::move(memory_engine),
-            rollback_handler
+            rollback_handler,
+            recover_handler
         );
 #endif
 
